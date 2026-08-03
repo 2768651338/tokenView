@@ -1,0 +1,15 @@
+{
+  "name": "tokenview-server",
+  "version": "1.0.0",
+  "description": "TokenView 后端服务 - 直读本地工具用量，零数据库依赖",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
