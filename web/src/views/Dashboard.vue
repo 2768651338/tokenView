@@ -38,13 +38,9 @@
       <ModelBar :models="models" />
     </div>
 
-    <!-- 工具统计 -->
-    <div style="padding: 0 28px 14px;">
+    <!-- 工具统计 + 模型市场价参考（两列紧凑并排） -->
+    <div class="lower-grid">
       <ToolStats :tools="tools" />
-    </div>
-
-    <!-- 模型市场价参考 -->
-    <div style="padding: 0 28px 14px;">
       <PriceTable :data="prices" />
     </div>
 

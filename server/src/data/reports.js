@@ -5,9 +5,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { dataDir } = require('../runtime');
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
-const FILE = path.join(DATA_DIR, 'reports.jsonl');
+const FILE = path.join(dataDir(), 'reports.jsonl');
 
 const state = { records: [], ids: new Set(), loaded: false };
 
@@ -47,7 +47,7 @@ function append({ channel, model, promptTokens, completionTokens, latencyMs, sta
     remark: remark.slice(0, 255),
     createdAt: Date.now()
   };
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(path.dirname(FILE))) fs.mkdirSync(path.dirname(FILE), { recursive: true });
   fs.appendFileSync(FILE, JSON.stringify(row) + '\n', 'utf8');
   state.records.push(row);
   state.ids.add(requestId);

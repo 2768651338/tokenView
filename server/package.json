@@ -6,10 +6,15 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "build:exe": "node scripts/build-exe.js",
+    "build:setup": "node scripts/build-setup.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0"
   }
 }
