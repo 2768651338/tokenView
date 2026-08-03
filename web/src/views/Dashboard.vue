@@ -38,6 +38,11 @@
       <ModelBar :models="models" />
     </div>
 
+    <!-- 工具统计 -->
+    <div style="padding: 0 28px 14px;">
+      <ToolStats :tools="tools" />
+    </div>
+
     <!-- 模型市场价参考 -->
     <div style="padding: 0 28px 14px;">
       <PriceTable :data="prices" />
@@ -51,6 +56,7 @@
         :page="usage.page"
         :page-size="usage.pageSize"
         :channel-list="channelList"
+        :source-options="sourceOptions"
         @page-change="setUsagePage"
         @filter-change="setUsageFilter"
         @refresh="loadUsage"
@@ -70,11 +76,12 @@ import TrendChart from '../components/TrendChart.vue';
 import ChannelPie from '../components/ChannelPie.vue';
 import ModelBar from '../components/ModelBar.vue';
 import TopRank from '../components/TopRank.vue';
+import ToolStats from '../components/ToolStats.vue';
 import PriceTable from '../components/PriceTable.vue';
 import UsageTable from '../components/UsageTable.vue';
 import {
   fetchOverview, fetchTrend, fetchChannels, fetchModels,
-  fetchUsage, fetchChannelList, fetchPrices
+  fetchUsage, fetchChannelList, fetchPrices, fetchTools
 } from '../api';
 
 const dayOptions = [7, 30, 90];
@@ -87,10 +94,29 @@ const trend = ref({ list: [] });
 const channels = ref([]);
 const models = ref([]);
 const prices = ref({ list: [] });
+const tools = ref([]);
 const channelList = ref([]);
 
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
-const usageFilter = reactive({ channel: '', status: '', start: '', end: '' });
+const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
+
+// 来源筛选选项（13 工具 + api）
+const sourceOptions = [
+  { id: 'zcode', name: 'ZCode' },
+  { id: 'claude-code', name: 'Claude Code' },
+  { id: 'codex', name: 'Codex' },
+  { id: 'codebuddy-cn', name: 'CodeBuddy CN' },
+  { id: 'joyclaw', name: 'JoyClaw' },
+  { id: 'kimi', name: 'Kimi' },
+  { id: 'lobsterai', name: 'LobsterAI' },
+  { id: 'opensquilla', name: 'OpenSquilla' },
+  { id: 'qoder', name: 'Qoder' },
+  { id: 'trae', name: 'Trae' },
+  { id: 'trae-cn', name: 'Trae CN' },
+  { id: 'trae-solo-cn', name: 'TRAE SOLO CN' },
+  { id: 'workbuddy', name: 'WorkBuddy' },
+  { id: 'api', name: '上报接口' }
+];
 
 let timer = null;
 
@@ -109,6 +135,9 @@ async function loadModels() {
 async function loadPrices() {
   prices.value = await fetchPrices();
 }
+async function loadTools() {
+  tools.value = await fetchTools();
+}
 async function loadUsage() {
   const data = await fetchUsage({
     page: usage.page,
@@ -126,7 +155,7 @@ async function loadChannelList() {
 async function refreshAll() {
   loading.value = true;
   try {
-    await Promise.all([loadOverview(), loadTrend(), loadChannels(), loadModels(), loadPrices()]);
+    await Promise.all([loadOverview(), loadTrend(), loadChannels(), loadModels(), loadPrices(), loadTools()]);
   } catch (e) {
     console.error('数据加载失败:', e.message);
   } finally {

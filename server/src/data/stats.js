@@ -7,8 +7,34 @@
  */
 const zcode = require('./zcode');
 const claudeCode = require('./claude-code');
+const codex = require('./codex');
+const workbuddy = require('./workbuddy');
+const lobsterai = require('./lobsterai');
+const joyclaw = require('./joyclaw');
+const codebuddyCn = require('./codebuddy-cn');
+const qoder = require('./qoder');
 const reports = require('./reports');
 const prices = require('./prices.json');
+
+/** 固定 13 工具清单（展示顺序与用户定义一致） */
+const TOOL_LIST = [
+  { id: 'zcode', name: 'ZCode' },
+  { id: 'claude-code', name: 'Claude Code' },
+  { id: 'codex', name: 'Codex' },
+  { id: 'codebuddy-cn', name: 'CodeBuddy CN' },
+  { id: 'joyclaw', name: 'JoyClaw' },
+  { id: 'kimi', name: 'Kimi' },
+  { id: 'lobsterai', name: 'LobsterAI' },
+  { id: 'opensquilla', name: 'OpenSquilla' },
+  { id: 'qoder', name: 'Qoder' },
+  { id: 'trae', name: 'Trae' },
+  { id: 'trae-cn', name: 'Trae CN' },
+  { id: 'trae-solo-cn', name: 'TRAE SOLO CN' },
+  { id: 'workbuddy', name: 'WorkBuddy' }
+];
+
+/** 全部数据源适配器（source 即工具标识） */
+const SOURCES = { zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder };
 
 /* ---------- 工具 ---------- */
 
@@ -34,13 +60,26 @@ function parseRange(days = 7) {
   return [start.getTime(), end];
 }
 
-/** 合并三源数据（默认带费用计算） */
+/** 合并全部数据源（默认带费用计算） */
 function getAllRows(startMs = 0, endMs = Infinity) {
-  return [
+  const rows = [
     ...zcode.getRows(startMs, endMs),
     ...claudeCode.getRows(startMs, endMs),
+    ...codex.getRows(startMs, endMs),
+    ...workbuddy.getRows(startMs, endMs),
+    ...lobsterai.getRows(startMs, endMs),
+    ...joyclaw.getRows(startMs, endMs),
+    ...codebuddyCn.getRows(startMs, endMs),
+    ...qoder.getRows(startMs, endMs),
     ...reports.getRows(startMs, endMs)
   ].map(withCost);
+  // 上报数据按 tool 字段归属工具（未填 tool 归入 api；工具名归一化为清单 id）
+  for (const r of rows) {
+    if (r.source === 'api' && r.tool) {
+      r.source = String(r.tool).toLowerCase().replace(/\s+/g, '-');
+    }
+  }
+  return rows;
 }
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -239,9 +278,10 @@ function getPrices() {
 }
 
 /** 调用明细分页 */
-function getUsage({ page = 1, pageSize = 20, channel = '', status = '', start = '', end = '' } = {}) {
+function getUsage({ page = 1, pageSize = 20, channel = '', status = '', start = '', end = '', source = '' } = {}) {
   let rows = getAllRows();
   if (channel) rows = rows.filter((r) => r.channel === channel);
+  if (source) rows = rows.filter((r) => r.source === source);
   if (status !== '' && status !== undefined && status !== null) {
     const s = Number(status);
     rows = rows.filter((r) => r.status === s);
@@ -284,4 +324,39 @@ function getChannelList() {
   }));
 }
 
-module.exports = { getOverview, getTrend, getChannels, getModels, getPrices, getUsage, getChannelList };
+/** 工具统计：固定 13 工具清单 + 聚合数据 + 状态 */
+function getTools() {
+  const rows = getAllRows();
+  const agg = new Map(); // toolId -> { calls, tokens, cost, lastUsed }
+  for (const r of rows) {
+    const key = r.source;
+    const a = agg.get(key) || { calls: 0, tokens: 0, cost: 0, lastUsed: 0 };
+    a.calls += 1;
+    a.tokens += r.totalTokens;
+    a.cost += r.cost;
+    if (r.createdAt > a.lastUsed) a.lastUsed = r.createdAt;
+    agg.set(key, a);
+  }
+  return TOOL_LIST.map((t) => {
+    const a = agg.get(t.id) || { calls: 0, tokens: 0, cost: 0, lastUsed: 0 };
+    let status = '待上报';
+    if (a.calls > 0) status = '有数据';
+    // 加密类适配器解密失败时标记
+    const src = SOURCES[t.id];
+    if (src && src.status && src.status().healthy === false) status = '解密失败';
+    return {
+      id: t.id,
+      name: t.name,
+      calls: a.calls,
+      tokens: a.tokens,
+      cost: Number(a.cost.toFixed(2)),
+      last_used: a.lastUsed ? fmtTime(a.lastUsed) : '',
+      status
+    };
+  });
+}
+
+module.exports = {
+  getOverview, getTrend, getChannels, getModels, getPrices,
+  getUsage, getChannelList, getTools
+};

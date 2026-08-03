@@ -14,7 +14,8 @@ const router = express.Router();
  *   completion_tokens: 567,           // 输出 tokens
  *   latency_ms: 850,                  // 可选，延迟
  *   status: 1,                        // 可选，1成功 0失败，默认 1
- *   request_id: "req_xxx"             // 可选，未传则自动生成
+ *   request_id: "req_xxx",            // 可选，未传则自动生成
+ *   tool: "Trae"                      // 可选，工具标识（工具维度统计用）
  * }
  */
 router.post('/report', (req, res) => {
@@ -26,7 +27,8 @@ router.post('/report', (req, res) => {
       completion_tokens = 0,
       latency_ms = 0,
       status = 1,
-      request_id = ''
+      request_id = '',
+      tool = ''
     } = req.body || {};
 
     // 基础校验
@@ -47,7 +49,8 @@ router.post('/report', (req, res) => {
       completionTokens: cTokens,
       latencyMs: Math.max(0, Number(latency_ms) || 0),
       status: status ? 1 : 0,
-      requestId
+      requestId,
+      tool: String(tool).trim().slice(0, 32)
     });
 
     if (!row) {

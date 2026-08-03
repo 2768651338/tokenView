@@ -42,6 +42,11 @@ router.get('/models', wrap((req, res) => {
   res.json({ code: 0, data: stats.getModels(days, limit) });
 }));
 
+// ---------- 工具统计（13 个 code 工具） ----------
+router.get('/tools', wrap((req, res) => {
+  res.json({ code: 0, data: stats.getTools() });
+}));
+
 // ---------- 模型市场价参考 ----------
 router.get('/prices', wrap((req, res) => {
   res.json({
@@ -64,7 +69,8 @@ router.get('/usage', wrap((req, res) => {
       channel: req.query.channel || '',
       status: req.query.status,
       start: req.query.start || '',
-      end: req.query.end || ''
+      end: req.query.end || '',
+      source: req.query.source || ''
     })
   });
 }));

@@ -7,6 +7,10 @@
         <option value="">全部渠道</option>
         <option v-for="c in channelList" :key="c.id" :value="c.name">{{ c.name }}</option>
       </select>
+      <select v-model="filters.source" @change="onFilterChange">
+        <option value="">全部来源</option>
+        <option v-for="s in sourceOptions" :key="s.id" :value="s.id">{{ s.name }}</option>
+      </select>
       <select v-model="filters.status" @change="onFilterChange">
         <option value="">全部状态</option>
         <option value="1">成功</option>
@@ -76,11 +80,12 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 20 },
-  channelList: { type: Array, default: () => [] }
+  channelList: { type: Array, default: () => [] },
+  sourceOptions: { type: Array, default: () => [] }
 });
 const emit = defineEmits(['page-change', 'filter-change', 'refresh']);
 
-const filters = reactive({ channel: '', status: '', start: '', end: '' });
+const filters = reactive({ channel: '', source: '', status: '', start: '', end: '' });
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)));
 

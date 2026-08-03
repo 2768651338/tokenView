@@ -28,7 +28,7 @@ function load() {
 }
 
 /** 写入一条上报记录，重复 request_id 返回 null */
-function append({ channel, model, promptTokens, completionTokens, latencyMs, status, requestId, remark = '' }) {
+function append({ channel, model, promptTokens, completionTokens, latencyMs, status, requestId, tool = '', remark = '' }) {
   load();
   if (state.ids.has(requestId)) return null;
   const row = {
@@ -37,6 +37,7 @@ function append({ channel, model, promptTokens, completionTokens, latencyMs, sta
     channelKind: 'api',
     model,
     source: 'api',
+    tool, // 工具标识（Trae / kimi / ...），用于工具维度统计
     promptTokens,
     completionTokens,
     totalTokens: promptTokens + completionTokens,

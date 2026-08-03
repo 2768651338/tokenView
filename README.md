@@ -22,8 +22,9 @@
 - **渠道占比**：环形图展示各渠道消耗占比，tooltip 显示费用与调用数
 - **模型 Top 排行**：横向渐变条形图
 - **渠道排行榜**：带金/银/铜牌标识
-- **调用明细**：分页表格，支持渠道 / 状态 / 日期范围筛选
-- **实时数据**：直读数据源，ZCode 每次调用实时反映到仪表盘（60 秒内刷新）
+- **调用明细**：分页表格，支持渠道 / 来源（13 工具）/ 状态 / 日期范围筛选
+- **工具统计**：13 个 code 工具维度（调用 / Tokens / 费用 / 状态），无本地数据的工具可通过上报接口统计
+- **实时数据**：直读数据源，各工具每次调用实时反映到仪表盘（60 秒内刷新）
 - **上报接口**：业务方实时上报 token 消耗（写入本地 JSONL，立即生效）
 
 ## 快速开始
@@ -52,12 +53,18 @@ cd web && npm install && npm run dev
 | 数据源 | 位置 | 读取方式 |
 |---|---|---|
 | **ZCode** | `~/.zcode/cli/db/db.sqlite`（`model_usage` 表） | 只读 SQLite 查询（WAL 模式，可与运行中的 ZCode 并发读） |
-| **Claude Code** | `~/.claude/projects/**/*.jsonl` | 扫描 assistant 消息的 usage 字段，内存缓存（文件变更时自动重建） |
-| **上报 API** | `server/data/reports.jsonl` | 追加写入，request_id 幂等去重 |
+| **Claude Code** | `~/.claude/projects/**/*.jsonl` | 扫描 assistant 消息的 usage 字段，内存缓存 |
+| **Codex** | `~/.codex/sessions/**/rollout-*.jsonl` + `archived_sessions/` | token_count 事件（last_token_usage 增量）+ turn_context 模型 join |
+| **WorkBuddy** | `~/.workbuddy/projects/*/*.jsonl` | providerData.rawUsage 逐调用记录（含费用 credit） |
+| **LobsterAI** | `AppData\Roaming\LobsterAI\openclaw\state\agents\main\sessions\*.jsonl` | Claude Code 格式（message.usage） |
+| **JoyClaw** | `AppData\Roaming\JoyClaw\state\desktop-token-usage-state.json` | 专用用量状态文件（结构就绪，暂无数据） |
+| **CodeBuddy CN / Qoder** | `AppData\Roaming\*\User\globalStorage\state.vscdb` | VS Code secret 解密（DPAPI+AES-GCM，best-effort；当前缓存仅含时间戳/配额，无 token 明细） |
+| **上报 API** | `server/data/reports.jsonl` | 追加写入，request_id 幂等去重，支持 tool 字段 |
 
+- **工具统计维度**：仪表盘「工具统计」面板覆盖 13 个 code 工具（zcode / claude code / codex / CodeBuddy CN / JoyClaw / kimi / LobsterAI / OpenSquilla / qoder / Trae CN / TRAE SOLO CN / Trae / WorkBuddy），有本地数据自动采集，无本地数据的（Trae 系列、kimi、OpenSquilla 等）通过上报接口 `tool` 字段统计
 - **渠道识别**：ZCode 的 provider UUID → 渠道名（读取 `~/.zcode/v2/config.json` 映射）；Claude Code 按模型名前缀推断（claude-*→Anthropic、gpt-*→OpenAI、glm-*→智谱AI、deepseek-*→DeepSeek 等）
-- **实时性**：统计接口每次请求直接查询数据源（ZCode 万级数据毫秒级聚合），无同步延迟
-- **只读安全**：不修改 ZCode / Claude Code 的任何数据
+- **实时性**：统计接口每次请求直接查询数据源，无同步延迟
+- **只读安全**：不修改任何工具的数据
 
 ## API 说明
 
