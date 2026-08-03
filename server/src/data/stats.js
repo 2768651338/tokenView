@@ -16,7 +16,7 @@ const qoder = require('./qoder');
 const reports = require('./reports');
 const prices = require('./prices.json');
 
-/** 固定 13 工具清单（展示顺序与用户定义一致） */
+/** 固定工具清单（展示顺序与用户定义一致） */
 const TOOL_LIST = [
   { id: 'zcode', name: 'ZCode' },
   { id: 'claude-code', name: 'Claude Code' },
@@ -30,7 +30,8 @@ const TOOL_LIST = [
   { id: 'trae', name: 'Trae' },
   { id: 'trae-cn', name: 'Trae CN' },
   { id: 'trae-solo-cn', name: 'TRAE SOLO CN' },
-  { id: 'workbuddy', name: 'WorkBuddy' }
+  { id: 'workbuddy', name: 'WorkBuddy' },
+  { id: 'coze', name: '扣子' }
 ];
 
 /** 全部数据源适配器（source 即工具标识） */
@@ -60,6 +61,18 @@ function parseRange(days = 7) {
   return [start.getTime(), end];
 }
 
+/** 工具别名：上报 tool 值 → 工具清单 id（中文名等非 slug 形式） */
+const TOOL_ALIASES = {
+  '扣子': 'coze'
+};
+
+/** 上报 tool 值归一化为工具 id */
+function normalizeTool(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return 'api';
+  return TOOL_ALIASES[t] || t.toLowerCase().replace(/\s+/g, '-');
+}
+
 /** 合并全部数据源（默认带费用计算） */
 function getAllRows(startMs = 0, endMs = Infinity) {
   const rows = [
@@ -73,10 +86,10 @@ function getAllRows(startMs = 0, endMs = Infinity) {
     ...qoder.getRows(startMs, endMs),
     ...reports.getRows(startMs, endMs)
   ].map(withCost);
-  // 上报数据按 tool 字段归属工具（未填 tool 归入 api；工具名归一化为清单 id）
+  // 上报数据按 tool 字段归属工具（未填 tool 归入 api）
   for (const r of rows) {
     if (r.source === 'api' && r.tool) {
-      r.source = String(r.tool).toLowerCase().replace(/\s+/g, '-');
+      r.source = normalizeTool(r.tool);
     }
   }
   return rows;

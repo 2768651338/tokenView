@@ -96,7 +96,7 @@ const channelList = ref([]);
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
 const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
 
-// 来源筛选选项（13 工具 + api）
+// 来源筛选选项（14 工具 + api）
 const sourceOptions = [
   { id: 'zcode', name: 'ZCode' },
   { id: 'claude-code', name: 'Claude Code' },
@@ -111,6 +111,7 @@ const sourceOptions = [
   { id: 'trae-cn', name: 'Trae CN' },
   { id: 'trae-solo-cn', name: 'TRAE SOLO CN' },
   { id: 'workbuddy', name: 'WorkBuddy' },
+  { id: 'coze', name: '扣子' },
   { id: 'api', name: '上报接口' }
 ];
 
