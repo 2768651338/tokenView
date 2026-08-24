@@ -1,0 +1,19 @@
+{
+  "name": "tokenview-desktop",
+  "version": "1.0.0",
+  "description": "TokenView 桌面端 - Electron 原生窗口外壳，内嵌 Express 服务",
+  "private": true,
+  "scripts": {
+    "icon": "node scripts/make-icon.js",
+    "assemble": "node scripts/assemble.js",
+    "dev": "npm run assemble && electron app",
+    "pack": "electron-packager app TokenView --platform=win32 --arch=x64 --out=release --icon=assets/tokenview.ico --overwrite --app-version=1.0.0 --app-bundle-id=com.tokenview.dashboard",
+    "setup": "npm run pack && \"%LOCALAPPDATA%\\Programs\\Inno Setup 6\\ISCC.exe\" installer\\tokenview-desktop.iss",
+    "build": "npm run assemble && npm run pack && npm run setup"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^43.4.1",
+    "esbuild": "^0.28.2"
+  }
+}

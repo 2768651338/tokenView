@@ -77,6 +77,9 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 18px 28px;
+  /* 桌面端无系统标题栏：顶栏即窗口拖拽区，右侧预留原生最小化/最大化/关闭覆盖按钮 */
+  -webkit-app-region: drag;
+  padding-right: calc(28px + env(titlebar-area-x, 0px) + (100% - env(titlebar-area-width, 100%)));
   border-bottom: 1px solid rgba(94, 130, 255, 0.12);
   background: rgba(8, 13, 26, 0.6);
   backdrop-filter: blur(12px);
@@ -84,6 +87,8 @@ body {
   top: 0;
   z-index: 10;
 }
+/* 拖拽区内的可交互元素恢复点击 */
+.topbar button, .topbar .seg { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand-logo {
   width: 40px; height: 40px;

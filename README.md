@@ -25,21 +25,24 @@
 
 ## 🚀 快速开始
 
-### 方式一：安装包（推荐，一体化产品形态）
+### 方式一：桌面应用安装包（推荐）
 
-`TokenView-Setup.exe`（约 24 MB）——安装向导、桌面/开始菜单快捷方式、无黑窗口静默运行：
+`desktop/release/TokenView-Setup.exe`（约 103 MB）——**独立桌面应用，原生窗口运行，不再打开浏览器**：
 
-1. 双击安装（安装到 `%LOCALAPPDATA%\Programs\TokenView`，免管理员）
-2. 双击桌面「TokenView」快捷方式 → 服务静默启动，自动打开浏览器
-3. 用完在任务栏/任务管理器结束进程，或控制面板卸载
+1. 双击安装（免管理员；与旧版共用安装位置，原地升级保留数据）
+2. 双击桌面「TokenView」快捷方式 → 弹出 TokenView 应用窗口（内嵌服务自动启动）
+3. 关闭窗口即完全退出；控制面板可卸载
 
 - 数据目录：`%LOCALAPPDATA%\TokenView\data\`
-- 日志文件：`%LOCALAPPDATA%\TokenView\logs\`（`--log` 文件日志）
-- **单实例**：重复启动不会开第二个服务，仅打开浏览器到已运行实例
+- 日志文件：`%LOCALAPPDATA%\TokenView\logs\`（自动记录）
+- **单实例**：重复启动不会开第二个，仅聚焦已开窗口
+- 外部链接自动交给系统浏览器打开
 
-### 方式二：绿色单文件
+构建：`cd desktop && npm install && npm run build`（装配 → electron-packager → Inno Setup 一条龙）
 
-`TokenView.exe`（约 90 MB，自包含 Node 运行时 + 前端 + 后端），**目标机器无需安装任何依赖**，拷贝即用：
+### 方式二：绿色单文件（无窗口服务模式，旧形态保留）
+
+`server/dist/TokenView.exe`（约 90 MB，自包含 Node 运行时 + 前端 + 后端），**目标机器无需安装任何依赖**，拷贝即用；启动后自动打开浏览器，适合无窗口后台挂机场景：
 
 ```
 TokenView.exe                      # 双击启动（控制台窗口显示日志，关闭即退出）
@@ -58,6 +61,8 @@ TokenView.exe --data-dir <目录>     # 指定数据目录
 cd server && npm install && npm run dev
 # 终端 2：前端（端口 5173，/api 自动代理到后端）
 cd web && npm install && npm run dev
+# 桌面端开发（装配后直接弹 Electron 窗口）
+cd desktop && npm install && npm run dev
 ```
 
 浏览器访问 **http://localhost:5173**

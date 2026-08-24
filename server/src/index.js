@@ -1,48 +1,9 @@
-const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
 const config = require('./config');
 const runtime = require('./runtime');
-const statsRouter = require('./routes/stats');
-const usageRouter = require('./routes/usage');
-
-const app = express();
-app.use(express.json({ limit: '1mb' }));
-
-// 路由挂载
-app.use('/api/usage', usageRouter);
-app.use('/api/stats', statsRouter);
-
-// 健康检查
-app.get('/api/health', (req, res) => {
-  res.json({ code: 0, message: 'TokenView server OK', time: new Date().toISOString() });
-});
-
-// ---- 前端静态资源（单文件模式内嵌 / 开发构建产物） ----
-const webDist = runtime.unpackWebAssets() // SEA 内嵌资源解包
-  || (fs.existsSync(path.join(__dirname, '..', '..', 'web', 'dist')) ? path.join(__dirname, '..', '..', 'web', 'dist') : null);
-
-if (webDist) {
-  app.use(express.static(webDist, { maxAge: '1h' }));
-  // SPA fallback（非 /api 路径回 index.html）
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
-    res.sendFile(path.join(webDist, 'index.html'));
-  });
-}
-
-// 404
-app.use((req, res) => {
-  res.status(404).json({ code: 404, message: `接口不存在: ${req.method} ${req.path}` });
-});
-
-// 统一错误兜底
-app.use((err, req, res, next) => {
-  console.error('[server error]', err.message);
-  res.status(500).json({ code: 500, message: '服务器内部错误' });
-});
+const { createApp } = require('./app');
 
 // ---- 工具函数 ----
 function openBrowser(url) {
@@ -82,6 +43,8 @@ runtime.setupFileLogging(dataPath, process.argv.slice(2));
     openBrowser(`http://localhost:${port}`);
     process.exit(0);
   }
+
+  const { app, webDist } = createApp();
 
   // 端口冲突自动递增探测
   function listen(p, maxTries = 11) {

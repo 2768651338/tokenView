@@ -4,6 +4,8 @@ node_modules/
 # 构建产物
 dist/
 web/dist/
+desktop/app/
+desktop/release/
 
 # 环境配置
 .env
@@ -18,3 +20,6 @@ npm-debug.log*
 # 系统文件
 .DS_Store
 Thumbs.db
+/.mimosa
+/desktop/.mimosa
+/server/.mimosa
