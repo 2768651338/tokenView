@@ -18,9 +18,9 @@ const chartRef = ref(null);
 let chart = null;
 
 const PALETTE = [
-  '#22d3ee', '#8b5cf6', '#34d399', '#fbbf24',
-  '#f87171', '#60a5fa', '#f472b6', '#2dd4bf',
-  '#a3e635', '#fb923c'
+  '#2f81f7', '#39c5cf', '#3fb950', '#d29922',
+  '#f85149', '#bc8cff', '#539bf5', '#ff9b57',
+  '#8b949e', '#6cb0ff'
 ];
 
 function render() {
@@ -39,9 +39,9 @@ function render() {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'item',
-      backgroundColor: 'rgba(13, 20, 38, 0.95)',
-      borderColor: 'rgba(94, 130, 255, 0.35)',
-      textStyle: { color: '#e8edf9', fontSize: 12 },
+      backgroundColor: '#161b22',
+      borderColor: '#30363d',
+      textStyle: { color: '#e6edf3', fontSize: 12 },
       formatter: (p) =>
         `<b>${p.name}</b><br/>Tokens：${fmtTokens(p.value)}（${p.ratio}%）<br/>费用：${fmtCost(p.cost)}<br/>调用：${p.calls.toLocaleString('zh-CN')} 次`
     },
@@ -51,8 +51,8 @@ function render() {
       top: 'middle',
       itemWidth: 10,
       itemHeight: 10,
-      icon: 'circle',
-      textStyle: { color: '#8b96ad', fontSize: 11 },
+      icon: 'rect',
+      textStyle: { color: '#9198a1', fontSize: 11 },
       formatter: (name) => {
         const d = data.find((x) => x.name === name);
         return `${name}  ${d ? d.ratio + '%' : ''}`;
@@ -64,8 +64,8 @@ function render() {
       left: '30%',
       top: '38%',
       textAlign: 'center',
-      textStyle: { color: '#e8edf9', fontSize: 20, fontWeight: 700 },
-      subtextStyle: { color: '#56617a', fontSize: 11 }
+      textStyle: { color: '#e6edf3', fontSize: 20, fontWeight: 600 },
+      subtextStyle: { color: '#6e7681', fontSize: 11 }
     },
     series: [{
       type: 'pie',
@@ -73,16 +73,13 @@ function render() {
       center: ['32%', '50%'],
       avoidLabelOverlap: true,
       itemStyle: {
-        borderColor: '#0b1120',
-        borderWidth: 2,
-        shadowBlur: 10,
-        shadowColor: 'rgba(34, 211, 238, 0.25)'
+        borderColor: '#161b22',
+        borderWidth: 2
       },
       label: { show: false },
       emphasis: {
-        scaleSize: 6,
-        label: { show: false },
-        itemStyle: { shadowBlur: 22, shadowColor: 'rgba(34, 211, 238, 0.5)' }
+        scaleSize: 5,
+        label: { show: false }
       },
       data
     }]

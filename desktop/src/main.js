@@ -38,13 +38,13 @@ function createWindow(url) {
     height: 900,
     minWidth: 1024,
     minHeight: 640,
-    backgroundColor: '#070b14', // 与前端 --bg-0 一致，避免启动白闪
+    backgroundColor: '#0d1117', // 与前端 --bg-0 一致，避免启动白闪
     titleBarStyle: 'hidden', // 去掉白色系统标题栏，窗口与应用内容融为一体
     titleBarOverlay: {
-      // 覆盖层配色贴合 .topbar 背景（rgba(8,13,26,.6) 叠在 #070b14 上的合成色）
-      color: '#080c18',
-      symbolColor: '#c9d4e8',
-      height: 48
+      // 覆盖层配色贴合 .topbar 背景（#0d1117）
+      color: '#0d1117',
+      symbolColor: '#9198a1',
+      height: 44
     },
     autoHideMenuBar: true,
     title: 'TokenView',

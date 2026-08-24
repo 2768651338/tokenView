@@ -4,10 +4,9 @@
       v-for="k in cards"
       :key="k.key"
       class="kpi-card"
-      :style="{ '--kpi-glow': k.glow }"
     >
       <div class="kpi-label">{{ k.label }}</div>
-      <div class="kpi-value" :style="{ color: k.color }">{{ k.value }}</div>
+      <div class="kpi-value">{{ k.value }}</div>
       <div class="kpi-sub">
         {{ k.sub }}
         <span
@@ -45,33 +44,27 @@ const cards = computed(() => {
   return [
     {
       key: 'total', label: '累计 Token 消耗', value: fmtTokens(o.total_tokens),
-      sub: `近 ${o.range_days || 30} 天 ${fmtTokens(o.period_tokens)}`,
-      color: '#67e8f9', glow: 'rgba(34, 211, 238, 0.22)'
+      sub: `近 ${o.range_days || 30} 天 ${fmtTokens(o.period_tokens)}`
     },
     {
       key: 'today', label: '今日消耗', value: fmtTokens(o.today_tokens),
-      sub: `${fmtNum(o.today_calls)} 次调用`, delta: o.today_delta,
-      color: '#a78bfa', glow: 'rgba(139, 92, 246, 0.25)'
+      sub: `${fmtNum(o.today_calls)} 次调用`, delta: o.today_delta
     },
     {
       key: 'cost', label: '累计费用', value: fmtCost(o.total_cost),
-      sub: `按市场价估算 · 近 ${o.range_days || 30} 天 ${fmtCost(o.period_cost)}`,
-      color: '#fcd34d', glow: 'rgba(251, 191, 36, 0.2)'
+      sub: `按市场价估算 · 近 ${o.range_days || 30} 天 ${fmtCost(o.period_cost)}`
     },
     {
       key: 'calls', label: '调用总次数', value: fmtNum(o.total_calls),
-      sub: `日均 ${fmtNum(Math.round(o.avg_daily_tokens || 0))} tokens`,
-      color: '#6ee7b7', glow: 'rgba(52, 211, 153, 0.2)'
+      sub: `日均 ${fmtNum(Math.round(o.avg_daily_tokens || 0))} tokens`
     },
     {
       key: 'channels', label: '活跃渠道', value: fmtNum(o.active_channels),
-      sub: '接入 LLM 服务渠道',
-      color: '#fda4af', glow: 'rgba(248, 113, 113, 0.2)'
+      sub: '接入 LLM 服务渠道'
     },
     {
       key: 'rate', label: '调用成功率', value: fmtPercent(o.success_rate),
-      sub: '成功调用 / 总调用',
-      color: '#93c5fd', glow: 'rgba(96, 165, 250, 0.22)'
+      sub: '成功调用 / 总调用'
     }
   ];
 });

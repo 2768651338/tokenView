@@ -99,10 +99,10 @@ function refresh() {
 
 <style scoped>
 .pager-btn {
-  border: 1px solid rgba(94, 130, 255, 0.25);
-  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--card-border);
+  background: var(--bg-0);
   color: var(--text-main);
-  border-radius: 8px;
+  border-radius: 4px;
   padding: 4px 14px;
   font-size: 12.5px;
   cursor: pointer;

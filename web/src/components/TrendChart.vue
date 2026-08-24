@@ -50,9 +50,9 @@ const chartRef = ref(null);
 let chart = null;
 
 const COLORS = {
-  tokens: ['#22d3ee', '#8b5cf6'],
-  cost: ['#fbbf24', '#f87171'],
-  calls: ['#34d399', '#22d3ee']
+  tokens: '#2f81f7',
+  cost: '#d29922',
+  calls: '#3fb950'
 };
 
 function render() {
@@ -60,16 +60,16 @@ function render() {
   const list = props.trend.list || [];
   const labels = list.map((d) => d.label);
   const values = list.map((d) => Number(d[metric.value]) || 0);
-  const [c1, c2] = COLORS[metric.value];
+  const c1 = COLORS[metric.value];
   const fmt = metric.value === 'cost' ? fmtCost : metric.value === 'calls' ? fmtNum : fmtTokens;
 
   chart.setOption({
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(13, 20, 38, 0.95)',
-      borderColor: 'rgba(94, 130, 255, 0.35)',
-      textStyle: { color: '#e8edf9', fontSize: 12 },
+      backgroundColor: '#161b22',
+      borderColor: '#30363d',
+      textStyle: { color: '#e6edf3', fontSize: 12 },
       valueFormatter: (v) => fmt(v)
     },
     grid: { left: 12, right: 16, top: 36, bottom: 8, containLabel: true },
@@ -77,15 +77,15 @@ function render() {
       type: 'category',
       data: labels,
       boundaryGap: false,
-      axisLine: { lineStyle: { color: 'rgba(94, 130, 255, 0.2)' } },
-      axisLabel: { color: '#8b96ad', fontSize: 11, interval: 'auto' },
+      axisLine: { lineStyle: { color: '#30363d' } },
+      axisLabel: { color: '#9198a1', fontSize: 11, interval: 'auto' },
       axisTick: { show: false }
     },
     yAxis: {
       type: 'value',
-      splitLine: { lineStyle: { color: 'rgba(94, 130, 255, 0.09)' } },
+      splitLine: { lineStyle: { color: '#21262d' } },
       axisLabel: {
-        color: '#8b96ad', fontSize: 11,
+        color: '#9198a1', fontSize: 11,
         formatter: (v) => {
           if (metric.value === 'cost') return '¥' + v;
           return v >= 1e6 ? v / 1e6 + 'M' : v >= 1e3 ? v / 1e3 + 'K' : v;
@@ -96,26 +96,21 @@ function render() {
       name: metrics.find((m) => m.value === metric.value).label,
       type: 'line',
       data: values,
-      smooth: 0.45,
+      smooth: 0.3,
       symbol: 'circle',
-      symbolSize: 5,
+      symbolSize: 4,
       showSymbol: false,
-      lineStyle: { width: 3, color: c1, shadowColor: c1, shadowBlur: 12 },
-      itemStyle: { color: c1, borderColor: '#0b1120', borderWidth: 2 },
-      areaStyle: {
-        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: c1 + '55' },
-          { offset: 1, color: c2 + '05' }
-        ])
-      },
+      lineStyle: { width: 2, color: c1 },
+      itemStyle: { color: c1, borderColor: '#161b22', borderWidth: 2 },
+      areaStyle: { color: c1 + '1a' },
       markLine: {
         silent: true,
         symbol: 'none',
-        lineStyle: { color: 'rgba(139, 150, 173, 0.4)', type: 'dashed' },
-        label: { color: '#56617a', fontSize: 10, formatter: '均值' },
+        lineStyle: { color: '#6e7681', type: 'dashed' },
+        label: { color: '#6e7681', fontSize: 10, formatter: '均值' },
         data: [{
           type: 'average',
-          label: { formatter: ({ value }) => '日均 ' + fmt(value), color: '#8b96ad' }
+          label: { formatter: ({ value }) => '日均 ' + fmt(value), color: '#9198a1' }
         }]
       }
     }]

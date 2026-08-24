@@ -3,7 +3,13 @@
     <!-- 顶部栏 -->
     <header class="topbar">
       <div class="brand">
-        <div class="brand-logo">⚡</div>
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="13" width="4.5" height="8" rx="1.5" fill="currentColor" opacity="0.55"/>
+            <rect x="9.75" y="8" width="4.5" height="13" rx="1.5" fill="currentColor" opacity="0.8"/>
+            <rect x="16.5" y="3" width="4.5" height="18" rx="1.5" fill="currentColor"/>
+          </svg>
+        </div>
         <div>
           <h1>TokenView</h1>
           <div class="sub">多渠道 Token 消耗监控中心</div>
@@ -192,19 +198,19 @@ onBeforeUnmount(() => clearInterval(timer));
 
 <style scoped>
 .refresh-btn {
-  border: 1px solid rgba(34, 211, 238, 0.35);
-  background: linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(139, 92, 246, 0.15));
-  color: #9be9ff;
-  border-radius: 10px;
-  padding: 7px 18px;
-  font-size: 13px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 12.5px;
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.2s;
+  transition: border-color 0.15s, color 0.15s;
 }
 .refresh-btn:hover:not(:disabled) {
   border-color: var(--accent);
-  box-shadow: 0 0 14px rgba(34, 211, 238, 0.35);
+  color: var(--accent);
 }
 .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
