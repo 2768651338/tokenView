@@ -1,5 +1,6 @@
 const express = require('express');
 const stats = require('../data/stats');
+const priceTable = require('../data/custom-prices');
 
 const router = express.Router();
 
@@ -53,10 +54,26 @@ router.get('/prices', wrap((req, res) => {
     code: 0,
     data: {
       currency: '元 / 百万 tokens',
-      note: '官方市场价（2026-08 查询，美元计价按汇率 6.8 换算），中转渠道实际收费可能不同',
+      note: '官方市场价（2026-08 查询，美元计价按汇率 6.8 换算），中转渠道实际收费可能不同；标「自定义」的为手动覆盖价',
       list: stats.getPrices()
     }
   });
+}));
+
+// 新增/修改自定义模型单价（覆盖默认价，也可新增默认表外的模型）
+router.post('/prices', wrap((req, res) => {
+  const { model, input, output } = req.body || {};
+  const r = priceTable.setPrice(model, input, output);
+  if (r.error) return res.status(400).json({ code: 400, message: r.error });
+  res.json({ code: 0, message: '已保存', data: r });
+}));
+
+// 恢复默认价（删除自定义覆盖）
+router.post('/prices/reset', wrap((req, res) => {
+  const { model } = req.body || {};
+  const r = priceTable.removePrice(model);
+  if (r.error) return res.status(400).json({ code: 400, message: r.error });
+  res.json({ code: 0, message: '已恢复默认价', data: r });
 }));
 
 // ---------- 用量明细分页 ----------

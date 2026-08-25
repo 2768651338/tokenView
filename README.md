@@ -87,7 +87,7 @@ cd desktop && npm install && npm run dev
 
 **原理**：`server/src/data/` 下每个工具一个适配器，`getRows(startMs, endMs)` 返回统一行结构；统计接口每次请求直查数据源，无同步延迟；全程只读，不修改任何工具数据。
 
-**无本地数据的工具如何统计**：上报时携带 `tool` 字段即可归入对应工具维度：
+**无本地数据的工具如何统计**：上报时携带 `tool` 字段即可归入对应工具维度（完整参数与校验规则见下方 [API 参考](#api-参考)）：
 
 ```bash
 curl -X POST http://localhost:3000/api/usage/report \
@@ -116,25 +116,68 @@ curl -X POST http://localhost:3000/api/usage/report \
 ```
 
 - 未配置单价的模型费用为 0；缓存 tokens 计入总量但不参与计价
-- 仪表盘「**模型市场价参考**」面板展示全部模型单价与累计费用
-- 中转渠道实际费率不同时，直接修改 `prices.json` 即可（保存立即生效）
+- 仪表盘「**模型市场价参考**」面板展示全部模型单价与累计费用，**支持自定义**：点「＋ 新增模型」添加价表中没有的模型，或对已有模型点「编辑」覆盖默认单价（行内带「自定义」标记，可一键「恢复默认」）；自定义价持久化于 `<数据目录>/custom-prices.json`，立即生效且重启保留
+- 中转渠道实际费率不同时，除面板编辑外也可直接修改 `prices.json`（默认价表，保存立即生效）
 
 ---
 
 ## 🔌 API 参考
 
-### 上报接口 `POST /api/usage/report`
+### 上报接口统计（无本地数据源的工具）
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| channel | ✅ | 渠道名称（LLM 供应商） |
-| model | ✅ | 模型名称 |
-| prompt_tokens | ✅ | 输入 tokens |
-| completion_tokens | ✅ | 输出 tokens |
-| tool | 否 | 工具标识（Trae / kimi 等，归入工具统计维度） |
-| latency_ms | 否 | 延迟毫秒数 |
-| status | 否 | 1 成功 / 0 失败，默认 1 |
-| request_id | 否 | 调用方 ID（未传自动生成；重复上报幂等忽略） |
+工具渠道分两类：**ZCode、Claude Code、Codex** 等工具的用量数据落在本地，TokenView 直读文件自动统计；而 **Kimi、OpenSquilla、Trae / Trae CN / TRAE SOLO CN、扣子（Coze）** 等工具没有本地用量明细（会话在服务端或是 Web 壳），仪表盘无法直接读取 —— 这类工具由业务方在每次 LLM 调用后调用上报接口，把用量推给 TokenView。
+
+上报数据**实时生效**，与本地直读数据同台呈现：计入渠道占比、模型排行、调用明细，携带 `tool` 字段时归入**工具统计**维度（面板中来源标记为 `api`）。数据落盘于 `<数据目录>/reports.jsonl`，与直读数据互不影响。
+
+#### 接口定义 `POST /api/usage/report`
+
+- Content-Type：`application/json`
+- 端口：开发模式与绿色单文件默认 `3000`；**桌面应用默认随机端口**（避免冲突），实际端口见日志文件 `%LOCALAPPDATA%\TokenView\logs\`，或启动时用 `--port` / 环境变量 `TOKENVIEW_PORT` 固定，便于业务方对接
+
+| 字段 | 类型 | 必填 | 校验与说明 |
+|---|---|---|---|
+| channel | string | ✅ | LLM 渠道名称（如 `deepseek`），计入渠道占比；空则 400 |
+| model | string | ✅ | 模型名称（如 `deepseek-v4-flash`）；**需与 `prices.json` 键名一致才会计费**，未配置单价的模型费用记 0；空则 400 |
+| prompt_tokens | number | ✅ | 输入 tokens；负数按 0 处理 |
+| completion_tokens | number | ✅ | 输出 tokens；**两者之和必须 > 0，否则 400** |
+| tool | string | 否 | 工具标识（如 `Trae`、`kimi`、`扣子`），归入工具统计维度；超 32 字符截断 |
+| latency_ms | number | 否 | 调用延迟毫秒，默认 0，负数按 0 处理 |
+| status | number | 否 | 1 成功 / 0 失败，默认 1；**非 0 值均按成功计** |
+| request_id | string | 否 | 调用方幂等 ID，未传自动生成；**相同 ID 重复上报按成功幂等忽略**（网络重试安全），响应中 `data.duplicate: true` |
+
+请求示例：
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/usage/report \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel": "deepseek",
+    "model": "deepseek-v4-flash",
+    "prompt_tokens": 1234,
+    "completion_tokens": 567,
+    "tool": "Trae",
+    "latency_ms": 850,
+    "request_id": "req_001"
+  }'
+```
+
+成功响应（费用按 `prices.json` 市场价实时估算）：
+
+```json
+{
+  "code": 0,
+  "message": "上报成功",
+  "data": {
+    "request_id": "req_001",
+    "channel": "deepseek",
+    "model": "deepseek-v4-flash",
+    "total_tokens": 1801,
+    "cost": 0.0024
+  }
+}
+```
+
+失败响应（HTTP 400）：`{"code":400,"message":"channel 与 model 为必填项"}`、`{"code":400,"message":"token 数量必须大于 0"}`
 
 ### 统计接口
 
@@ -144,8 +187,10 @@ curl -X POST http://localhost:3000/api/usage/report \
 | GET | `/api/stats/trend?days=30&granularity=day&channel=` | 时间趋势（day / week / month） |
 | GET | `/api/stats/channels?days=7` | 渠道维度统计（含占比） |
 | GET | `/api/stats/models?days=7&limit=10` | 模型 Top 排行（含单价） |
-| GET | `/api/stats/tools` | 13 工具统计（调用 / Tokens / 费用 / 状态） |
-| GET | `/api/stats/prices` | 模型市场价参考列表 |
+| GET | `/api/stats/tools` | 14 工具统计（调用 / Tokens / 费用 / 状态） |
+| GET | `/api/stats/prices` | 模型市场价参考列表（含 `custom` 自定义标记） |
+| POST | `/api/stats/prices` | 新增/修改自定义单价 `{model, input, output}`（元/1K tokens，覆盖默认价） |
+| POST | `/api/stats/prices/reset` | 恢复默认单价 `{model}`（删除自定义覆盖） |
 | GET | `/api/stats/usage?page=1&pageSize=20&channel=&source=&status=&start=&end=` | 调用明细分页 |
 | GET | `/api/channels` | 渠道列表 |
 | GET | `/api/health` | 健康检查 |

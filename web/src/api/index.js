@@ -23,6 +23,10 @@ export const fetchChannels = (days) => http.get('/stats/channels', { params: { d
 export const fetchModels = (days, limit = 10) => http.get('/stats/models', { params: { days, limit } });
 /** 模型市场价参考 */
 export const fetchPrices = () => http.get('/stats/prices');
+/** 保存自定义模型单价（元 / 1K tokens，覆盖默认价或新增模型） */
+export const saveModelPrice = (model, input, output) => http.post('/stats/prices', { model, input, output });
+/** 恢复模型默认单价（删除自定义覆盖） */
+export const resetModelPrice = (model) => http.post('/stats/prices/reset', { model });
 /** 工具统计（13 个 code 工具） */
 export const fetchTools = () => http.get('/stats/tools');
 /** 用量明细分页 */

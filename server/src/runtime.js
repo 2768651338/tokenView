@@ -38,16 +38,18 @@ function unpackWebAssets() {
 
   let off = 6;
   const count = asset.readUInt32LE(off); off += 4;
-  const hash = crypto.createHash('sha1').update(asset).digest('hex').slice(0, 12);
+  const hash = crypto.createHash('sha256').update(asset).digest('hex').slice(0, 12);
   const dir = path.join(os.tmpdir(), `tokenview-web-${hash}`);
   if (fs.existsSync(dir)) return dir; // 已解包过
 
-  fs.mkdirSync(dir, { recursive: true });
+  const root = path.resolve(dir);
+  fs.mkdirSync(root, { recursive: true });
   for (let i = 0; i < count; i++) {
     const nameLen = asset.readUInt16LE(off); off += 2;
     const name = asset.toString('utf8', off, off + nameLen); off += nameLen;
     const size = asset.readUInt32LE(off); off += 4;
-    const filePath = path.join(dir, name);
+    const filePath = path.resolve(root, name);
+    if (filePath !== root && !filePath.startsWith(root + path.sep)) continue; // 越界条目防护
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, asset.subarray(off, off + size));
     off += size;

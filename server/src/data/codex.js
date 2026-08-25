@@ -15,8 +15,10 @@ const cache = { records: [], lastScan: 0, dir: null };
 
 function collectRollouts(dir, depth = 0, result = []) {
   if (depth > 4 || !fs.existsSync(dir)) return result;
+  const base = path.resolve(dir);
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
+    const full = path.resolve(base, entry.name);
+    if (full !== base && !full.startsWith(base + path.sep)) continue; // 越界路径防护
     if (entry.isDirectory()) collectRollouts(full, depth + 1, result);
     else if (entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) result.push(full);
   }

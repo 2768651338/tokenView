@@ -14,7 +14,7 @@ const joyclaw = require('./joyclaw');
 const codebuddyCn = require('./codebuddy-cn');
 const qoder = require('./qoder');
 const reports = require('./reports');
-const prices = require('./prices.json');
+const priceTable = require('./custom-prices');
 
 /** 固定工具清单（展示顺序与用户定义一致） */
 const TOOL_LIST = [
@@ -39,9 +39,9 @@ const SOURCES = { zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codeb
 
 /* ---------- 工具 ---------- */
 
-/** 模型单价（元 / 1K tokens） */
+/** 模型单价（元 / 1K tokens）：默认表 + 自定义覆盖 */
 function priceOf(modelName) {
-  const p = prices[modelName] || {};
+  const p = priceTable.getPrices()[modelName] || {};
   return { input: Number(p.input) || 0, output: Number(p.output) || 0 };
 }
 
@@ -261,9 +261,12 @@ function getModels(days = 7, limit = 10) {
     });
 }
 
-/** 模型市场价参考列表（含累计消耗，便于核对） */
+/** 模型市场价参考列表（含累计消耗，便于核对；零用量的价表模型也列出，便于自定义管理） */
 function getPrices() {
   const rows = getAllRows();
+  const effective = priceTable.getPrices();
+  const customMap = priceTable.getCustomMap();
+  const defaultsMap = priceTable.getDefaults();
   const map = new Map();
   for (const r of rows) {
     const key = `${r.channel}::${r.model}`;
@@ -272,6 +275,11 @@ function getPrices() {
     m.cost += r.cost;
     m.calls += 1;
     map.set(key, m);
+  }
+  // 价表中存在但尚无用量的模型（如新增自定义价），追加在列表末尾
+  const seen = new Set([...map.values()].map((m) => m.model));
+  for (const model of Object.keys(effective)) {
+    if (!seen.has(model)) map.set(`__price_only__::${model}`, { channel: '', model, tokens: 0, cost: 0, calls: 0 });
   }
   return [...map.values()]
     .sort((a, b) => b.tokens - a.tokens)
@@ -285,7 +293,9 @@ function getPrices() {
         output_per_million: Number((p.output * 1000).toFixed(2)),
         cost: Number(m.cost.toFixed(2)),
         calls: m.calls,
-        tokens: m.tokens
+        tokens: m.tokens,
+        custom: !!customMap[m.model],
+        has_default: m.model in defaultsMap
       };
     });
 }

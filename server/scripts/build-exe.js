@@ -33,9 +33,11 @@ if (!fs.existsSync(path.join(WEB_DIST, 'index.html'))) {
 // 2. 打包前端资源（自定义格式：'TVWEB1' + 文件数 + [路径长 路径 内容长 内容]）
 step('打包前端资源 → assets.bin');
 function collect(dir, base = '', result = []) {
+  const root = path.resolve(dir);
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const rel = base ? `${base}/${entry.name}` : entry.name;
-    const full = path.join(dir, entry.name);
+    const full = path.resolve(root, entry.name);
+    if (full !== root && !full.startsWith(root + path.sep)) continue; // 越界路径防护
     if (entry.isDirectory()) collect(full, rel, result);
     else result.push({ name: rel, data: fs.readFileSync(full) });
   }
@@ -90,8 +92,9 @@ console.log(`   ${(fs.statSync(EXE).size / 1024 / 1024).toFixed(1)} MB`);
 step('postject 注入 SEA blob');
 const sentinel = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 try {
-  execSync(`npx --yes postject "${EXE}" NODE_SEA_BLOB "${SEA_BLOB}" --sentinel-fuse ${sentinel}`,
-    { cwd: DIST, stdio: 'inherit' });
+  const r = spawnSync('npx', ['--yes', 'postject', EXE, 'NODE_SEA_BLOB', SEA_BLOB, '--sentinel-fuse', sentinel],
+    { cwd: DIST, stdio: 'inherit', shell: true });
+  if (r.status !== 0) throw new Error('postject 退出码 ' + r.status);
 } catch (e) {
   console.error('❌ postject 注入失败：', e.message);
   process.exit(1);

@@ -1,6 +1,6 @@
 const express = require('express');
 const reports = require('../data/reports');
-const prices = require('../data/prices.json');
+const priceTable = require('../data/custom-prices');
 
 const router = express.Router();
 
@@ -62,7 +62,7 @@ router.post('/report', (req, res) => {
       });
     }
 
-    const p = prices[row.model] || {};
+    const p = priceTable.getPrices()[row.model] || {};
     const cost = Number(((row.promptTokens * (Number(p.input) || 0) + row.completionTokens * (Number(p.output) || 0)) / 1000).toFixed(4));
     res.json({
       code: 0,

@@ -55,7 +55,7 @@
     <!-- 工具统计 + 模型市场价参考（两列紧凑并排） -->
     <div class="lower-grid">
       <ToolStats :tools="tools" />
-      <PriceTable :data="prices" />
+      <PriceTable :data="prices" @refresh="loadPrices" />
     </div>
 
     <!-- 明细 -->
