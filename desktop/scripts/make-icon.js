@@ -80,8 +80,8 @@ function sample(px, py) {
   }
   return [...c, 255];
 }
-/** 渲染任意尺寸（3x 超采样抗锯齿） */
-function render(size) {
+/** 渲染任意尺寸（3x 超采样抗锯齿），返回 RGBA 像素 */
+function renderRGBA(size) {
   const SS = 3, px = new Uint8Array(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -97,7 +97,11 @@ function render(size) {
       px[off + 2] = Math.round(bl / n); px[off + 3] = Math.round(a / n);
     }
   }
-  return encodePNG(size, size, px);
+  return px;
+}
+/** 渲染为 PNG Buffer */
+function render(size) {
+  return encodePNG(size, size, renderRGBA(size));
 }
 
 // ---------- ICO 打包（PNG 压缩条目） ----------
@@ -126,3 +130,5 @@ const OUT = path.join(__dirname, '..', 'assets', 'tokenview.ico');
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, buildICO([256, 128, 64, 48, 32, 24, 16]));
 console.log(`✅ 图标已生成: ${OUT} (${(fs.statSync(OUT).size / 1024).toFixed(1)} KB)`);
+
+module.exports = { renderRGBA };

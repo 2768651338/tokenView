@@ -23,6 +23,14 @@
             @click="setDays(d)"
           >近 {{ d }} 天</button>
         </div>
+        <select
+          class="refresh-select"
+          :value="refreshInterval"
+          title="自动刷新间隔"
+          @change="setRefreshInterval($event.target.value)"
+        >
+          <option v-for="o in refreshOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
         <button class="refresh-btn" :disabled="loading" @click="refreshAll">
           {{ loading ? '刷新中...' : '⟳ 刷新' }}
         </button>
@@ -66,13 +74,13 @@
     </div>
 
     <footer style="text-align:center;color:var(--text-faint);font-size:11px;padding-bottom:20px;">
-      TokenView · 真实数据实时直读 ZCode 与 Claude Code，无数据库依赖 · 每 60 秒自动刷新
+      TokenView · © 田小橙 QQ2768651338 · {{ refreshLabel }}
     </footer>
   </div>
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
 import KpiCards from '../components/KpiCards.vue';
 import TrendChart from '../components/TrendChart.vue';
 import ChannelPie from '../components/ChannelPie.vue';
@@ -122,6 +130,54 @@ const sourceOptions = [
 ];
 
 let timer = null;
+
+// ---- 自动刷新间隔（秒），0 = 关闭；选择持久化到 localStorage ----
+const REFRESH_STORAGE_KEY = 'tokenview-refresh-interval';
+const REFRESH_DEFAULT = 60;
+const refreshOptions = [
+  { value: 0, label: '关闭自动刷新' },
+  { value: 10, label: '每 10 秒' },
+  { value: 30, label: '每 30 秒' },
+  { value: 60, label: '每 60 秒' },
+  { value: 300, label: '每 5 分钟' },
+  { value: 900, label: '每 15 分钟' }
+];
+
+function loadRefreshInterval() {
+  try {
+    const raw = localStorage.getItem(REFRESH_STORAGE_KEY);
+    if (raw === null) return REFRESH_DEFAULT; // 从未设置过（Number(null) 是 0，不能直接转换）
+    const v = Number(raw);
+    if (refreshOptions.some((o) => o.value === v)) return v;
+  } catch { /* localStorage 不可用时回退默认值 */ }
+  return REFRESH_DEFAULT;
+}
+
+const refreshInterval = ref(loadRefreshInterval());
+const refreshLabel = computed(() => {
+  const v = refreshInterval.value;
+  if (!v) return '自动刷新已关闭';
+  if (v >= 60 && v % 60 === 0) return `每 ${v / 60} 分钟自动刷新`;
+  return `每 ${v} 秒自动刷新`;
+});
+
+function setRefreshInterval(v) {
+  const n = Number(v);
+  // 防呆：非法值一律回退默认间隔
+  refreshInterval.value = refreshOptions.some((o) => o.value === n) ? n : REFRESH_DEFAULT;
+  try { localStorage.setItem(REFRESH_STORAGE_KEY, String(refreshInterval.value)); } catch { /* 忽略写入失败 */ }
+  restartTimer();
+}
+
+function restartTimer() {
+  if (timer) { clearInterval(timer); timer = null; }
+  if (refreshInterval.value > 0) {
+    timer = setInterval(() => {
+      // 明细表不参与自动刷新，避免打断翻页
+      refreshAll();
+    }, refreshInterval.value * 1000);
+  }
+}
 
 async function loadOverview() {
   overview.value = await fetchOverview(days.value);
@@ -188,12 +244,11 @@ onMounted(() => {
   refreshAll();
   loadUsage();
   loadChannelList();
-  timer = setInterval(() => {
-    // 明细表不参与自动刷新，避免打断翻页
-    refreshAll();
-  }, 60000);
+  restartTimer();
 });
-onBeforeUnmount(() => clearInterval(timer));
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer);
+});
 </script>
 
 <style scoped>

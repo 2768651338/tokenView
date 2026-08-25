@@ -24,6 +24,20 @@
 
 html, body, #app { height: 100%; }
 
+/* ---- 滚动条：暗色细条，融入终端风（页面 + 表格区全局生效） ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #30363d transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: #48525e; }
+::-webkit-scrollbar-corner { background: transparent; }
+
 body {
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, -apple-system, sans-serif;
   color: var(--text-main);
@@ -65,7 +79,20 @@ body {
   z-index: 10;
 }
 /* 拖拽区内的可交互元素恢复点击 */
-.topbar button, .topbar .seg { -webkit-app-region: no-drag; }
+.topbar button, .topbar .seg, .topbar select { -webkit-app-region: no-drag; }
+.topbar .refresh-select {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+.topbar .refresh-select:hover { border-color: var(--accent); }
+.topbar .refresh-select option { background: var(--bg-0); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-logo {
   width: 30px; height: 30px;

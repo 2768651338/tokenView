@@ -25,6 +25,8 @@ if (!fs.existsSync(ICON)) {
   console.log('   图标缺失，生成中 ...');
   require('./make-icon.js');
 }
+// 安装器品牌图（iss 编译时需要）
+require('./make-installer-art.js');
 
 // 1. 清空并重建 app/
 fs.rmSync(APP, { recursive: true, force: true });
