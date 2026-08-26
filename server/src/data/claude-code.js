@@ -90,4 +90,4 @@ function getRows(startMs = 0, endMs = Infinity) {
   return source.getRecords().filter((r) => r.createdAt >= startMs && r.createdAt <= end);
 }
 
-module.exports = { getRows, source: 'claude-code' };
+module.exports = { getRows, source: 'claude-code', inferChannel };

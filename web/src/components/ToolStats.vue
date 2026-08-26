@@ -3,7 +3,7 @@
     <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;">
       <span>工具统计</span>
       <span style="font-size:11px;color:var(--text-faint);font-weight:400;letter-spacing:0;">
-        覆盖 14 个工具渠道 · 无本地数据源的通过上报接口统计
+        覆盖 16 个工具渠道 · 无本地数据源的通过上报接口统计
       </span>
     </div>
     <div class="table-wrap" style="max-height:360px;">

@@ -110,15 +110,17 @@ const channelList = ref([]);
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
 const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
 
-// 来源筛选选项（14 工具 + api）
+// 来源筛选选项（16 工具 + api）
 const sourceOptions = [
   { id: 'zcode', name: 'ZCode' },
   { id: 'claude-code', name: 'Claude Code' },
   { id: 'codex', name: 'Codex' },
+  { id: 'cc-switch', name: 'CC Switch' },
   { id: 'codebuddy-cn', name: 'CodeBuddy CN' },
   { id: 'joyclaw', name: 'JoyClaw' },
   { id: 'kimi', name: 'Kimi' },
   { id: 'lobsterai', name: 'LobsterAI' },
+  { id: 'opencode', name: 'OpenCode' },
   { id: 'opensquilla', name: 'OpenSquilla' },
   { id: 'qoder', name: 'Qoder' },
   { id: 'trae', name: 'Trae' },

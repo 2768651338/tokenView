@@ -1,6 +1,6 @@
 # TokenView · 多渠道 LLM Token 消耗仪表盘
 
-聚合统计 **14 个 AI 编程工具**的真实 Token 用量（ZCode、Claude Code、Codex、WorkBuddy、LobsterAI 等），从核心指标、时间趋势、渠道占比、模型排行、工具维度、调用明细六个角度可视化呈现。
+聚合统计 **16 个 AI 编程工具**的真实 Token 用量（ZCode、Claude Code、Codex、WorkBuddy、LobsterAI 等），从核心指标、时间趋势、渠道占比、模型排行、工具维度、调用明细六个角度可视化呈现。
 
 **桌面应用**：Electron 原生窗口运行，不依赖浏览器（v1.0.0 起提供 [安装包下载](https://github.com/2768651338/tokenView/releases/latest)）。
 **零数据库依赖**：后端直接读取各工具的本地用量数据（SQLite / JSONL），实时计算统计。
@@ -17,9 +17,9 @@
 | **渠道占比环形图** | 各 LLM 供应商消耗占比，tooltip 显示费用与调用数 |
 | **模型 Top 排行** | 横向条形图，tooltip 附市场单价 |
 | **渠道排行榜** | 金/银/铜牌标识 |
-| **工具统计面板** | 14 个工具渠道维度（调用 / Tokens / 费用 / 状态），无本地数据的工具可通过上报接口统计 |
+| **工具统计面板** | 16 个工具渠道维度（调用 / Tokens / 费用 / 状态），无本地数据的工具可通过上报接口统计 |
 | **模型市场价参考** | 全部模型的官方市场单价（元/百万 tokens）+ 累计费用核对；**支持自定义**：新增/覆盖模型单价、一键恢复默认 |
-| **调用明细分页** | 渠道 / 来源（14 工具）/ 状态 / 日期范围筛选 |
+| **调用明细分页** | 渠道 / 来源（16 工具）/ 状态 / 日期范围筛选 |
 | **自动刷新** | 间隔可选（关闭 / 10 秒 ~ 15 分钟），选择持久化保存 |
 | **上报 API** | 业务方实时上报 token 消耗，立即生效，`tool` 字段归入工具维度 |
 
@@ -69,13 +69,15 @@ cd desktop && npm install && npm run dev
 
 ---
 
-## 📊 数据接入：14 个工具渠道
+## 📊 数据接入：16 个工具渠道
 
 | 工具 | 数据位置（只读） | 状态 |
 |---|---|---|
 | ZCode | `~/.zcode/cli/db/db.sqlite`（model_usage 表） | ✅ 直读 |
 | Claude Code | `~/.claude/projects/**/*.jsonl` | ✅ 直读 |
 | Codex | `~/.codex/sessions/**/rollout-*.jsonl` | ✅ 直读 |
+| CC Switch | `~/.cc-switch/cc-switch.db`（usage_daily_rollups 按日汇总） | ✅ 直读（与 Codex/Claude Code 渠道数据同源，存在重叠） |
+| OpenCode | `~/.local/share/opencode/opencode.db`（session_message 表） | ✅ 直读（结构就绪，暂无数据） |
 | WorkBuddy | `~/.workbuddy/projects/*/*.jsonl` | ✅ 直读 |
 | LobsterAI | `AppData\Roaming\LobsterAI\openclaw\state\agents\main\sessions\*.jsonl` | ✅ 直读 |
 | JoyClaw | `AppData\Roaming\JoyClaw\state\desktop-token-usage-state.json` | ✅ 直读（结构就绪，暂无数据） |
@@ -188,7 +190,7 @@ curl -X POST http://127.0.0.1:3000/api/usage/report \
 | GET | `/api/stats/trend?days=30&granularity=day&channel=` | 时间趋势（day / week / month） |
 | GET | `/api/stats/channels?days=7` | 渠道维度统计（含占比） |
 | GET | `/api/stats/models?days=7&limit=10` | 模型 Top 排行（含单价） |
-| GET | `/api/stats/tools` | 14 工具统计（调用 / Tokens / 费用 / 状态） |
+| GET | `/api/stats/tools` | 16 工具统计（调用 / Tokens / 费用 / 状态） |
 | GET | `/api/stats/prices` | 模型市场价参考列表（含 `custom` 自定义标记与 `source` 价目来源） |
 | POST | `/api/stats/prices` | 新增/修改自定义单价 `{model, input, output}`（元/1K tokens，覆盖在线价与默认价） |
 | POST | `/api/stats/prices/reset` | 恢复默认单价 `{model}`（删除自定义覆盖，回落在线价/默认价） |

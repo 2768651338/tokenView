@@ -16,6 +16,8 @@ const lobsterai = require('./lobsterai');
 const joyclaw = require('./joyclaw');
 const codebuddyCn = require('./codebuddy-cn');
 const qoder = require('./qoder');
+const opencode = require('./opencode');
+const ccSwitch = require('./cc-switch');
 const reports = require('./reports');
 const priceTable = require('./custom-prices');
 
@@ -24,10 +26,12 @@ const TOOL_LIST = [
   { id: 'zcode', name: 'ZCode' },
   { id: 'claude-code', name: 'Claude Code' },
   { id: 'codex', name: 'Codex' },
+  { id: 'cc-switch', name: 'CC Switch' },
   { id: 'codebuddy-cn', name: 'CodeBuddy CN' },
   { id: 'joyclaw', name: 'JoyClaw' },
   { id: 'kimi', name: 'Kimi' },
   { id: 'lobsterai', name: 'LobsterAI' },
+  { id: 'opencode', name: 'OpenCode' },
   { id: 'opensquilla', name: 'OpenSquilla' },
   { id: 'qoder', name: 'Qoder' },
   { id: 'trae', name: 'Trae' },
@@ -38,7 +42,7 @@ const TOOL_LIST = [
 ];
 
 /** 全部数据源适配器（source 即工具标识） */
-const SOURCES = { zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder };
+const SOURCES = { zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder, opencode, 'cc-switch': ccSwitch };
 
 /** 合并行缓存 TTL：过期后下一次请求触发一次重建 */
 const CACHE_TTL_MS = 5000;
@@ -65,7 +69,7 @@ function normalizeTool(raw) {
 
 /* ---------- 合并行缓存（单飞重建） ---------- */
 
-const SOURCE_LIST = [zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder, reports];
+const SOURCE_LIST = [zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder, opencode, ccSwitch, reports];
 
 const cacheState = { rows: null, builtAt: 0 };
 let building = null;
