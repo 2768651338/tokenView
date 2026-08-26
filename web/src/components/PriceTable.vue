@@ -1,12 +1,14 @@
 <template>
   <div class="panel">
-    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
       <span>模型市场价参考</span>
       <span style="flex:1;font-size:11px;color:var(--text-faint);font-weight:400;letter-spacing:0;text-align:right;">
-        {{ meta.note || '' }}
+        {{ noteText }}
       </span>
+      <button class="pt-add" :disabled="syncing" @click="syncOnline">{{ syncing ? '同步中...' : '⟳ 同步在线价格' }}</button>
       <button class="pt-add" @click="startAdd">＋ 新增模型</button>
     </div>
+    <div v-if="syncError" class="pt-error" style="margin:-6px 0 8px;text-align:left;">同步失败：{{ syncError }}</div>
     <div class="table-wrap" style="max-height:340px;">
       <table class="usage-table">
         <thead>
@@ -58,6 +60,7 @@
               <td style="font-weight:600;">
                 {{ p.model }}
                 <span v-if="p.custom" class="chip" style="margin-left:6px;font-size:10px;padding:0 6px;">自定义</span>
+                <span v-else-if="p.source === 'modelradar'" class="chip" style="margin-left:6px;font-size:10px;padding:0 6px;">在线</span>
               </td>
               <td><span v-if="p.channel" class="chip">{{ p.channel }}</span><span v-else style="color:var(--text-faint);">—</span></td>
               <td style="text-align:right;color:var(--accent);">¥{{ p.input_per_million }}<span class="unit">/百万</span></td>
@@ -83,15 +86,45 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { fmtTokens, fmtCost, fmtNum } from '../utils/format';
-import { saveModelPrice, resetModelPrice } from '../api';
+import { saveModelPrice, resetModelPrice, syncModelRadarPrices } from '../api';
 
 const props = defineProps({
-  data: { type: Object, default: () => ({ list: [], note: '', currency: '' }) }
+  data: { type: Object, default: () => ({ list: [], note: '', currency: '', online: null }) }
 });
 const emit = defineEmits(['refresh']);
 
 const list = computed(() => props.data.list || []);
 const meta = computed(() => props.data);
+
+// 面板说明：三层价目 + 在线同步时间
+const noteText = computed(() => {
+  const parts = [meta.value.note || ''];
+  const online = meta.value.online;
+  if (online && online.syncedAt) {
+    const t = new Date(online.syncedAt).toLocaleString('zh-CN', { hour12: false });
+    parts.push(`在线价同步于 ${t}${online.effectiveDate ? '（生效日 ' + online.effectiveDate + '）' : ''}`);
+  } else {
+    parts.push('尚未同步在线价');
+  }
+  return parts.filter(Boolean).join(' · ');
+});
+
+// 同步在线价格（ModelRadar）
+const syncing = ref(false);
+const syncError = ref('');
+async function syncOnline() {
+  if (syncing.value) return;
+  syncing.value = true;
+  syncError.value = '';
+  try {
+    await syncModelRadarPrices();
+    emit('refresh');
+  } catch (err) {
+    syncError.value = err.message;
+  } finally {
+    syncing.value = false;
+  }
+}
 
 // 编辑态：{ model, input, output, isNew, error }，单价以「元 / 百万」呈现，保存时换算为元 / 1K
 const editing = ref(null);

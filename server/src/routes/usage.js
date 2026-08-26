@@ -1,6 +1,7 @@
 const express = require('express');
 const reports = require('../data/reports');
 const priceTable = require('../data/custom-prices');
+const stats = require('../data/stats');
 
 const router = express.Router();
 
@@ -61,6 +62,8 @@ router.post('/report', (req, res) => {
         data: { duplicate: true, request_id: requestId }
       });
     }
+
+    stats.invalidate(); // 新上报进入聚合缓存
 
     const p = priceTable.getPrices()[row.model] || {};
     const cost = Number(((row.promptTokens * (Number(p.input) || 0) + row.completionTokens * (Number(p.output) || 0)) / 1000).toFixed(4));

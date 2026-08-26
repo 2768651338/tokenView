@@ -1,9 +1,12 @@
 /**
- * 统计聚合层：合并 ZCode + Claude Code + 上报 三个数据源，
+ * 统计聚合层：合并 ZCode + Claude Code + 上报 等数据源，
  * 统一行结构：
  *   { requestId, channel, channelKind, model, source,
  *     promptTokens, completionTokens, totalTokens, cost,
  *     latencyMs, status, remark, createdAt(epoch ms) }
+ *
+ * 性能：全部接口共享一份合并行缓存；TTL 过期后单飞（single-flight）重建，
+ * 并发请求只触发一次构建；构建期间旧数据照常服务。
  */
 const zcode = require('./zcode');
 const claudeCode = require('./claude-code');
@@ -37,28 +40,15 @@ const TOOL_LIST = [
 /** 全部数据源适配器（source 即工具标识） */
 const SOURCES = { zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder };
 
+/** 合并行缓存 TTL：过期后下一次请求触发一次重建 */
+const CACHE_TTL_MS = 5000;
+
 /* ---------- 工具 ---------- */
 
 /** 模型单价（元 / 1K tokens）：默认表 + 自定义覆盖 */
 function priceOf(modelName) {
   const p = priceTable.getPrices()[modelName] || {};
   return { input: Number(p.input) || 0, output: Number(p.output) || 0 };
-}
-
-/** 按单价补全费用 */
-function withCost(row) {
-  const p = priceOf(row.model);
-  row.cost = Number(((row.promptTokens * p.input + row.completionTokens * p.output) / 1000).toFixed(4));
-  return row;
-}
-
-/** 解析时间范围：最近 N 天（含今天），返回 [startMs, endMs] */
-function parseRange(days = 7) {
-  const end = Date.now();
-  const start = new Date();
-  start.setDate(start.getDate() - (Number(days) - 1));
-  start.setHours(0, 0, 0, 0);
-  return [start.getTime(), end];
 }
 
 /** 工具别名：上报 tool 值 → 工具清单 id（中文名等非 slug 形式） */
@@ -73,26 +63,89 @@ function normalizeTool(raw) {
   return TOOL_ALIASES[t] || t.toLowerCase().replace(/\s+/g, '-');
 }
 
-/** 合并全部数据源（默认带费用计算） */
-function getAllRows(startMs = 0, endMs = Infinity) {
-  const rows = [
-    ...zcode.getRows(startMs, endMs),
-    ...claudeCode.getRows(startMs, endMs),
-    ...codex.getRows(startMs, endMs),
-    ...workbuddy.getRows(startMs, endMs),
-    ...lobsterai.getRows(startMs, endMs),
-    ...joyclaw.getRows(startMs, endMs),
-    ...codebuddyCn.getRows(startMs, endMs),
-    ...qoder.getRows(startMs, endMs),
-    ...reports.getRows(startMs, endMs)
-  ].map(withCost);
-  // 上报数据按 tool 字段归属工具（未填 tool 归入 api）
-  for (const r of rows) {
-    if (r.source === 'api' && r.tool) {
-      r.source = normalizeTool(r.tool);
-    }
+/* ---------- 合并行缓存（单飞重建） ---------- */
+
+const SOURCE_LIST = [zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, codebuddyCn, qoder, reports];
+
+const cacheState = { rows: null, builtAt: 0 };
+let building = null;
+
+const yieldTick = () => new Promise((resolve) => setImmediate(resolve));
+
+/** 全量构建一次合并行（各源自身有增量缓存，重复构建开销很小） */
+async function rebuild() {
+  const parts = [];
+  for (const src of SOURCE_LIST) {
+    parts.push(src.getRows(0, Number.MAX_SAFE_INTEGER));
+    await yieldTick(); // 源之间让出事件循环，避免长构建阻塞并发请求
   }
-  return rows;
+  const prices = priceTable.getPrices(); // 整轮构建只取一次价表
+  const rows = [];
+  for (const part of parts) {
+    for (const r of part) {
+      const p = prices[r.model] || {};
+      const input = Number(p.input) || 0;
+      const output = Number(p.output) || 0;
+      let source = r.source;
+      // 上报数据按 tool 字段归属工具（未填 tool 归入 api）
+      if (source === 'api' && r.tool) source = normalizeTool(r.tool);
+      rows.push({
+        ...r,
+        source,
+        cost: Number(((r.promptTokens * input + r.completionTokens * output) / 1000).toFixed(4))
+      });
+    }
+    await yieldTick();
+  }
+  cacheState.rows = rows;
+  cacheState.builtAt = Date.now();
+}
+
+/**
+ * 取合并行缓存；TTL 内直接复用，过期则等待一次单飞重建。
+ * 构建失败时若有旧数据则继续兜底返回，无旧数据才向上抛错。
+ */
+function ensureRows() {
+  if (cacheState.rows && Date.now() - cacheState.builtAt < CACHE_TTL_MS) {
+    return Promise.resolve(cacheState.rows);
+  }
+  if (!building) {
+    building = rebuild()
+      .catch((e) => {
+        console.error('[stats] 数据构建失败:', e.message);
+        if (!cacheState.rows) throw e; // 无旧数据可兜底时向上抛
+      })
+      .finally(() => { building = null; });
+  }
+  return building.then(() => cacheState.rows || []);
+}
+
+/** 价格等外部因素变化后调用：下一请求触发重建，期间旧数据兜底 */
+function invalidate() {
+  cacheState.builtAt = 0;
+}
+
+/** 应用启动时预热缓存（异步，不阻塞监听） */
+function warmup() {
+  ensureRows().catch(() => { /* 预热失败由首次请求再试 */ });
+}
+
+/** 合并全部数据源（带费用计算），按时间范围过滤 */
+async function getAllRows(startMs = 0, endMs = Infinity) {
+  const all = await ensureRows();
+  const end = endMs === Infinity ? Number.MAX_SAFE_INTEGER : endMs;
+  return all.filter((r) => r.createdAt >= startMs && r.createdAt <= end);
+}
+
+/* ---------- 时间工具 ---------- */
+
+/** 解析时间范围：最近 N 天（含今天），返回 [startMs, endMs] */
+function parseRange(days = 7) {
+  const end = Date.now();
+  const start = new Date();
+  start.setDate(start.getDate() - (Number(days) - 1));
+  start.setHours(0, 0, 0, 0);
+  return [start.getTime(), end];
 }
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -124,43 +177,59 @@ function bucketLabel(ms, granularity) {
 /* ---------- 统计函数 ---------- */
 
 /** 核心 KPI 汇总 */
-function getOverview(days = 30) {
+async function getOverview(days = 30) {
   const [start, end] = parseRange(days);
-  const allRows = getAllRows(); // 全量（ZCode ~10k 行，本地毫秒级）
+  const allRows = await getAllRows(); // 全量
 
-  const totalCalls = allRows.length;
-  const totalTokens = allRows.reduce((s, r) => s + r.totalTokens, 0);
-  const totalCost = allRows.reduce((s, r) => s + r.cost, 0);
-  const successCalls = allRows.filter((r) => r.status === 1).length;
-  const activeChannels = new Set(allRows.map((r) => r.channel)).size;
-
-  const periodRows = allRows.filter((r) => r.createdAt >= start && r.createdAt <= end);
-  const periodTokens = periodRows.reduce((s, r) => s + r.totalTokens, 0);
-  const periodCost = periodRows.reduce((s, r) => s + r.cost, 0);
+  let totalTokens = 0;
+  let totalCost = 0;
+  let successCalls = 0;
+  let periodTokens = 0;
+  let periodCost = 0;
+  let todayTokens = 0;
+  let todayCost = 0;
+  let yesterdayTokens = 0;
+  const channels = new Set();
+  const dayKeys = new Set();
 
   const today0 = new Date(); today0.setHours(0, 0, 0, 0);
   const y0 = new Date(today0); y0.setDate(y0.getDate() - 1);
-  const todayRows = allRows.filter((r) => r.createdAt >= today0.getTime());
-  const yesterdayRows = allRows.filter((r) => r.createdAt >= y0.getTime() && r.createdAt < today0.getTime());
-  const todayTokens = todayRows.reduce((s, r) => s + r.totalTokens, 0);
-  const todayCost = todayRows.reduce((s, r) => s + r.cost, 0);
-  const yesterdayTokens = yesterdayRows.reduce((s, r) => s + r.totalTokens, 0);
-  const todayDelta = yesterdayTokens > 0 ? ((todayTokens - yesterdayTokens) / yesterdayTokens) * 100 : null;
+  const todayMs = today0.getTime();
+  const yMs = y0.getTime();
 
-  const dayKeys = new Set(periodRows.map((r) => fmtDay(r.createdAt)));
+  for (const r of allRows) {
+    totalTokens += r.totalTokens;
+    totalCost += r.cost;
+    if (r.status === 1) successCalls++;
+    channels.add(r.channel);
+    if (r.createdAt >= start && r.createdAt <= end) {
+      periodTokens += r.totalTokens;
+      periodCost += r.cost;
+      dayKeys.add(fmtDay(r.createdAt));
+    }
+    if (r.createdAt >= todayMs) {
+      todayTokens += r.totalTokens;
+      todayCost += r.cost;
+    } else if (r.createdAt >= yMs && r.createdAt < todayMs) {
+      yesterdayTokens += r.totalTokens;
+    }
+  }
+
+  const totalCalls = allRows.length;
   const avgDailyTokens = dayKeys.size ? periodTokens / dayKeys.size : 0;
+  const todayDelta = yesterdayTokens > 0 ? ((todayTokens - yesterdayTokens) / yesterdayTokens) * 100 : null;
 
   return {
     total_tokens: totalTokens,
     total_cost: Number(totalCost.toFixed(2)),
     total_calls: totalCalls,
-    active_channels: activeChannels,
+    active_channels: channels.size,
     success_rate: totalCalls ? Number((successCalls / totalCalls * 100).toFixed(2)) : 100,
     period_tokens: periodTokens,
     period_cost: Number(periodCost.toFixed(2)),
     today_tokens: todayTokens,
     today_cost: Number(todayCost.toFixed(2)),
-    today_calls: todayRows.length,
+    today_calls: allRows.filter((r) => r.createdAt >= todayMs).length,
     today_delta: todayDelta === null ? null : Number(todayDelta.toFixed(2)),
     avg_daily_tokens: Math.round(avgDailyTokens),
     range_days: Number(days)
@@ -168,9 +237,9 @@ function getOverview(days = 30) {
 }
 
 /** 时间趋势 */
-function getTrend(days = 30, granularity = 'day', channel = '') {
+async function getTrend(days = 30, granularity = 'day', channel = '') {
   const [start, end] = parseRange(days);
-  const rows = getAllRows(start, end).filter((r) => !channel || r.channel === channel);
+  const rows = (await getAllRows(start, end)).filter((r) => !channel || r.channel === channel);
 
   const buckets = new Map();
   for (const r of rows) {
@@ -196,9 +265,9 @@ function getTrend(days = 30, granularity = 'day', channel = '') {
 }
 
 /** 渠道维度统计 */
-function getChannels(days = 7) {
+async function getChannels(days = 7) {
   const [start, end] = parseRange(days);
-  const rows = getAllRows(start, end);
+  const rows = await getAllRows(start, end);
   const map = new Map();
   for (const r of rows) {
     const c = map.get(r.channel) || {
@@ -227,9 +296,9 @@ function getChannels(days = 7) {
 }
 
 /** 模型 Top 排行 */
-function getModels(days = 7, limit = 10) {
+async function getModels(days = 7, limit = 10) {
   const [start, end] = parseRange(days);
-  const rows = getAllRows(start, end);
+  const rows = await getAllRows(start, end);
   const map = new Map();
   for (const r of rows) {
     const key = `${r.channel}::${r.model}`;
@@ -262,11 +331,12 @@ function getModels(days = 7, limit = 10) {
 }
 
 /** 模型市场价参考列表（含累计消耗，便于核对；零用量的价表模型也列出，便于自定义管理） */
-function getPrices() {
-  const rows = getAllRows();
+async function getPrices() {
+  const rows = await getAllRows();
   const effective = priceTable.getPrices();
   const customMap = priceTable.getCustomMap();
   const defaultsMap = priceTable.getDefaults();
+  const onlineMap = priceTable.getOnlinePrices();
   const map = new Map();
   for (const r of rows) {
     const key = `${r.channel}::${r.model}`;
@@ -276,11 +346,13 @@ function getPrices() {
     m.calls += 1;
     map.set(key, m);
   }
-  // 价表中存在但尚无用量的模型（如新增自定义价），追加在列表末尾
+  // 价表中存在但尚无用量的模型（如在线同步/新增自定义价），追加在列表末尾（按模型名排序）
   const seen = new Set([...map.values()].map((m) => m.model));
-  for (const model of Object.keys(effective)) {
-    if (!seen.has(model)) map.set(`__price_only__::${model}`, { channel: '', model, tokens: 0, cost: 0, calls: 0 });
-  }
+  const priceOnly = Object.keys(effective)
+    .filter((model) => !seen.has(model))
+    .sort((a, b) => a.localeCompare(b))
+    .map((model) => [`__price_only__::${model}`, { channel: '', model, tokens: 0, cost: 0, calls: 0 }]);
+  for (const [k, v] of priceOnly) map.set(k, v);
   return [...map.values()]
     .sort((a, b) => b.tokens - a.tokens)
     .map((m, i) => {
@@ -295,14 +367,15 @@ function getPrices() {
         calls: m.calls,
         tokens: m.tokens,
         custom: !!customMap[m.model],
-        has_default: m.model in defaultsMap
+        has_default: m.model in defaultsMap,
+        source: priceTable.getLayer(m.model)
       };
     });
 }
 
 /** 调用明细分页 */
-function getUsage({ page = 1, pageSize = 20, channel = '', status = '', start = '', end = '', source = '' } = {}) {
-  let rows = getAllRows();
+async function getUsage({ page = 1, pageSize = 20, channel = '', status = '', start = '', end = '', source = '' } = {}) {
+  let rows = await getAllRows();
   if (channel) rows = rows.filter((r) => r.channel === channel);
   if (source) rows = rows.filter((r) => r.source === source);
   if (status !== '' && status !== undefined && status !== null) {
@@ -337,9 +410,9 @@ function getUsage({ page = 1, pageSize = 20, channel = '', status = '', start = 
 }
 
 /** 渠道列表（筛选用） */
-function getChannelList() {
+async function getChannelList() {
   const names = new Map();
-  for (const r of getAllRows()) {
+  for (const r of await getAllRows()) {
     if (!names.has(r.channel)) names.set(r.channel, r.channelKind || r.channel);
   }
   return [...names.entries()].map(([name, provider], i) => ({
@@ -347,9 +420,9 @@ function getChannelList() {
   }));
 }
 
-/** 工具统计：固定 13 工具清单 + 聚合数据 + 状态 */
-function getTools() {
-  const rows = getAllRows();
+/** 工具统计：固定工具清单 + 聚合数据 + 状态 */
+async function getTools() {
+  const rows = await getAllRows();
   const agg = new Map(); // toolId -> { calls, tokens, cost, lastUsed }
   for (const r of rows) {
     const key = r.source;
@@ -381,5 +454,6 @@ function getTools() {
 
 module.exports = {
   getOverview, getTrend, getChannels, getModels, getPrices,
-  getUsage, getChannelList, getTools
+  getUsage, getChannelList, getTools,
+  invalidate, warmup
 };

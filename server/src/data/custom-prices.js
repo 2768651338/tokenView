@@ -6,28 +6,47 @@
 const fs = require('fs');
 const path = require('path');
 const defaults = require('./prices.json');
+const modelradar = require('./modelradar');
 const { dataDir } = require('../runtime');
 
 const FILE = () => path.join(dataDir(), 'custom-prices.json');
 
+/** mtime 缓存：文件未变时不重复读盘解析（费用计算每轮构建会高频调用） */
+const customCache = { mtimeMs: null, size: null, map: {} };
+
 /** 读取并清洗自定义价格表（过滤非法条目） */
 function loadCustom() {
+  let st = null;
+  try {
+    st = fs.statSync(FILE());
+  } catch { /* 文件不存在 */ }
+  if (!st) {
+    if (customCache.mtimeMs !== null) {
+      customCache.mtimeMs = null;
+      customCache.size = null;
+      customCache.map = {};
+    }
+    return {};
+  }
+  if (customCache.mtimeMs === st.mtimeMs && customCache.size === st.size) return customCache.map;
+  const out = {};
   try {
     const obj = JSON.parse(fs.readFileSync(FILE(), 'utf8'));
-    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
-    const out = {};
-    for (const [model, p] of Object.entries(obj)) {
-      if (!p || typeof p !== 'object') continue;
-      const input = Number(p.input);
-      const output = Number(p.output);
-      if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
-        out[model] = { input, output };
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      for (const [model, p] of Object.entries(obj)) {
+        if (!p || typeof p !== 'object') continue;
+        const input = Number(p.input);
+        const output = Number(p.output);
+        if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
+          out[model] = { input, output };
+        }
       }
     }
-    return out;
-  } catch {
-    return {}; // 文件不存在或损坏：全部回退默认价
-  }
+  } catch { /* 文件损坏：全部回退默认价 */ }
+  customCache.mtimeMs = st.mtimeMs;
+  customCache.size = st.size;
+  customCache.map = out;
+  return out;
 }
 
 function saveCustom(map) {
@@ -36,9 +55,17 @@ function saveCustom(map) {
   fs.writeFileSync(file, JSON.stringify(map, null, 2));
 }
 
-/** 生效价格表 = 默认 prices.json + 自定义覆盖 */
+/** 生效价格表 = 默认 prices.json + 在线同步（modelradar）+ 自定义覆盖，三层依次覆盖 */
 function getPrices() {
-  return { ...defaults, ...loadCustom() };
+  return { ...defaults, ...modelradar.getOnlinePrices(), ...loadCustom() };
+}
+
+/** 价格来源判定：custom / modelradar / default */
+function getLayer(model) {
+  const custom = loadCustom();
+  if (model in custom) return 'custom';
+  if (model in modelradar.getOnlinePrices()) return 'modelradar';
+  return 'default';
 }
 
 /** 仅自定义覆盖部分 */
@@ -77,4 +104,13 @@ function removePrice(model) {
   return { model: name };
 }
 
-module.exports = { getPrices, getCustomMap, getDefaults, setPrice, removePrice };
+module.exports = {
+  getPrices,
+  getCustomMap,
+  getDefaults,
+  getLayer,
+  getOnlinePrices: () => modelradar.getOnlinePrices(),
+  getOnlineMeta: () => modelradar.getOnlineMeta(),
+  setPrice,
+  removePrice
+};

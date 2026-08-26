@@ -8,6 +8,7 @@ const fs = require('fs');
 const runtime = require('./runtime');
 const statsRouter = require('./routes/stats');
 const usageRouter = require('./routes/usage');
+const stats = require('./data/stats');
 
 /**
  * @param {{ webDist?: string|null }} [options] 显式指定前端构建产物目录（桌面端传入）
@@ -20,6 +21,19 @@ function createApp(options = {}) {
   // 路由挂载
   app.use('/api/usage', usageRouter);
   app.use('/api/stats', statsRouter);
+
+  // 前端渠道筛选下拉请求的是 /api/channels（历史上从未挂载，一直 404）
+  app.get('/api/channels', (req, res) => {
+    stats.getChannelList()
+      .then((data) => res.json({ code: 0, data }))
+      .catch((err) => {
+        console.error('[channels error]', err.message);
+        res.status(500).json({ code: 500, message: '服务器内部错误' });
+      });
+  });
+
+  // 启动即预热聚合缓存，首次打开页面无需等待冷构建
+  setImmediate(() => stats.warmup());
 
   // 健康检查
   app.get('/api/health', (req, res) => {

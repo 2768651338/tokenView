@@ -27,6 +27,8 @@ export const fetchPrices = () => http.get('/stats/prices');
 export const saveModelPrice = (model, input, output) => http.post('/stats/prices', { model, input, output });
 /** 恢复模型默认单价（删除自定义覆盖） */
 export const resetModelPrice = (model) => http.post('/stats/prices/reset', { model });
+/** 从 ModelRadar 同步在线价目（USD 按汇率换算为元） */
+export const syncModelRadarPrices = () => http.post('/stats/prices/sync-modelradar');
 /** 工具统计（13 个 code 工具） */
 export const fetchTools = () => http.get('/stats/tools');
 /** 用量明细分页 */

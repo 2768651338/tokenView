@@ -2,8 +2,9 @@
 
 聚合统计 **14 个 AI 编程工具**的真实 Token 用量（ZCode、Claude Code、Codex、WorkBuddy、LobsterAI 等），从核心指标、时间趋势、渠道占比、模型排行、工具维度、调用明细六个角度可视化呈现。
 
+**桌面应用**：Electron 原生窗口运行，不依赖浏览器（v1.0.0 起提供 [安装包下载](https://github.com/2768651338/tokenView/releases/latest)）。
 **零数据库依赖**：后端直接读取各工具的本地用量数据（SQLite / JSONL），实时计算统计。
-**官方市场价计费**：费用按各模型官方 API 市场价自动估算。
+**官方市场价计费**：费用按各模型官方 API 市场价自动估算，支持面板内自定义单价。
 
 ---
 
@@ -17,8 +18,9 @@
 | **模型 Top 排行** | 横向条形图，tooltip 附市场单价 |
 | **渠道排行榜** | 金/银/铜牌标识 |
 | **工具统计面板** | 14 个工具渠道维度（调用 / Tokens / 费用 / 状态），无本地数据的工具可通过上报接口统计 |
-| **模型市场价参考** | 全部模型的官方市场单价（元/百万 tokens）+ 累计费用核对 |
-| **调用明细分页** | 渠道 / 来源（13 工具）/ 状态 / 日期范围筛选 |
+| **模型市场价参考** | 全部模型的官方市场单价（元/百万 tokens）+ 累计费用核对；**支持自定义**：新增/覆盖模型单价、一键恢复默认 |
+| **调用明细分页** | 渠道 / 来源（14 工具）/ 状态 / 日期范围筛选 |
+| **自动刷新** | 间隔可选（关闭 / 10 秒 ~ 15 分钟），选择持久化保存 |
 | **上报 API** | 业务方实时上报 token 消耗，立即生效，`tool` 字段归入工具维度 |
 
 ---
@@ -27,18 +29,16 @@
 
 ### 方式一：桌面应用安装包（推荐）
 
-`desktop/release/TokenView-Setup.exe`（约 103 MB）——**独立桌面应用，原生窗口运行，不再打开浏览器**：
+[从 GitHub Releases 下载](https://github.com/2768651338/tokenView/releases/latest) `TokenView-Setup.exe`（约 103 MB）——**独立桌面应用**，安装向导为同风格深色界面：
 
-1. 双击安装（免管理员；与旧版共用安装位置，原地升级保留数据）
-2. 双击桌面「TokenView」快捷方式 → 弹出 TokenView 应用窗口（内嵌服务自动启动）
+1. 双击安装（免管理员；支持从旧版原地升级，数据保留）
+2. 双击桌面「TokenView」快捷方式 → 弹出 TokenView 应用窗口（内嵌服务自动启动，不再打开浏览器）
 3. 关闭窗口即完全退出；控制面板可卸载
 
 - 数据目录：`%LOCALAPPDATA%\TokenView\data\`
-- 日志文件：`%LOCALAPPDATA%\TokenView\logs\`（自动记录）
+- 日志文件：`%LOCALAPPDATA%\TokenView\logs\`（自动记录，含实际服务端口）
 - **单实例**：重复启动不会开第二个，仅聚焦已开窗口
 - 外部链接自动交给系统浏览器打开
-
-构建：`cd desktop && npm install && npm run build`（装配 → electron-packager → Inno Setup 一条龙）
 
 ### 方式二：绿色单文件（无窗口服务模式，旧形态保留）
 
@@ -117,6 +117,7 @@ curl -X POST http://localhost:3000/api/usage/report \
 
 - 未配置单价的模型费用为 0；缓存 tokens 计入总量但不参与计价
 - 仪表盘「**模型市场价参考**」面板展示全部模型单价与累计费用，**支持自定义**：点「＋ 新增模型」添加价表中没有的模型，或对已有模型点「编辑」覆盖默认单价（行内带「自定义」标记，可一键「恢复默认」）；自定义价持久化于 `<数据目录>/custom-prices.json`，立即生效且重启保留
+- **在线价目同步**：点「⟳ 同步在线价格」从 [modelradar.cn](https://modelradar.cn/api) 拉取全量模型官方价（美元/百万，按汇率 6.8 换算为元，可用环境变量 `MODELRADAR_FX_USD_CNY` 调整），覆盖约 300 个模型，存于 `<数据目录>/modelradar-prices.json`；价目优先级为 **自定义 > 在线同步 > 官方默认**，面板中在线价带「在线」标记
 - 中转渠道实际费率不同时，除面板编辑外也可直接修改 `prices.json`（默认价表，保存立即生效）
 
 ---
@@ -188,9 +189,10 @@ curl -X POST http://127.0.0.1:3000/api/usage/report \
 | GET | `/api/stats/channels?days=7` | 渠道维度统计（含占比） |
 | GET | `/api/stats/models?days=7&limit=10` | 模型 Top 排行（含单价） |
 | GET | `/api/stats/tools` | 14 工具统计（调用 / Tokens / 费用 / 状态） |
-| GET | `/api/stats/prices` | 模型市场价参考列表（含 `custom` 自定义标记） |
-| POST | `/api/stats/prices` | 新增/修改自定义单价 `{model, input, output}`（元/1K tokens，覆盖默认价） |
-| POST | `/api/stats/prices/reset` | 恢复默认单价 `{model}`（删除自定义覆盖） |
+| GET | `/api/stats/prices` | 模型市场价参考列表（含 `custom` 自定义标记与 `source` 价目来源） |
+| POST | `/api/stats/prices` | 新增/修改自定义单价 `{model, input, output}`（元/1K tokens，覆盖在线价与默认价） |
+| POST | `/api/stats/prices/reset` | 恢复默认单价 `{model}`（删除自定义覆盖，回落在线价/默认价） |
+| POST | `/api/stats/prices/sync-modelradar` | 从 modelradar.cn 同步在线价目（手动触发，约 300 个模型） |
 | GET | `/api/stats/usage?page=1&pageSize=20&channel=&source=&status=&start=&end=` | 调用明细分页 |
 | GET | `/api/channels` | 渠道列表 |
 | GET | `/api/health` | 健康检查 |
@@ -200,13 +202,19 @@ curl -X POST http://127.0.0.1:3000/api/usage/report \
 ## 🛠️ 构建与打包
 
 ```bash
-cd server && npm install
+# 桌面应用（推荐）：装配 + electron-packager + Inno Setup 深色安装包一条龙
+cd desktop && npm install
+npm run build        # 产物：desktop/release/TokenView-Setup.exe 与绿色目录 TokenView-win32-x64/
+npm run dev          # 开发模式：装配后直接弹出 Electron 窗口
 
+# 无窗口服务模式（旧形态保留）：绿色单文件 + 静默服务安装包
+cd server && npm install
 npm run build:exe     # 绿色单文件 → dist/TokenView.exe（需 Node 24+）
-npm run build:setup   # 安装包 → dist/TokenView-Setup.exe（需 Inno Setup 6）
+npm run build:setup   # 服务版安装包 → dist/TokenView-Setup.exe（需 Inno Setup 6）
 ```
 
-构建流程：前端 `npm run build` → 资源打包（assets.bin）→ esbuild 后端单文件 → Node SEA 注入 → postject 注入 blob →（安装包）iscc 编译。
+桌面版流程：前端 vite 构建 → 装配 `desktop/app/`（Electron 主进程 + esbuild 服务端 bundle + 前端产物）→ @electron/packager → Inno Setup（深色自定义向导）。
+服务版流程：前端构建 → 资源打包（assets.bin）→ esbuild 后端单文件 → Node SEA 注入 → postject → iscc 编译。
 
 ---
 
@@ -214,9 +222,17 @@ npm run build:setup   # 安装包 → dist/TokenView-Setup.exe（需 Inno Setup 
 
 ```
 tokenView/
+├── desktop/                    # 桌面端（Electron 原生窗口）
+│   ├── src/main.js             # 主进程：内嵌服务启动 + 原生窗口（无边框深色、单实例）
+│   ├── scripts/                # assemble.js 装配 / make-icon.js 图标 / make-installer-art.js 安装器素材
+│   ├── installer/              # tokenview-desktop.iss（深色品牌化安装向导）
+│   ├── assets/                 # tokenview.ico / installer-logo.bmp
+│   └── release/                # 构建产物（TokenView-Setup.exe / TokenView-win32-x64/）
 ├── server/                     # 后端（Express，零数据库）
 │   ├── src/
-│   │   ├── index.js            # 入口（静态托管 / 单实例 / 端口递增 / 日志）
+│   │   ├── index.js            # CLI 入口（静态托管 / 单实例 / 端口递增 / 日志）
+│   │   ├── app.js              # Express 应用工厂（CLI 与桌面端共用）
+│   │   ├── embed.js            # 嵌入式启动入口（桌面端使用）
 │   │   ├── runtime.js          # SEA 环境适配（资源解包 / 数据目录 / 参数）
 │   │   ├── config.js           # 配置加载
 │   │   ├── data/               # 数据访问层
@@ -224,16 +240,16 @@ tokenView/
 │   │   │   ├── lobsterai.js / joyclaw.js / codebuddy-cn.js / qoder.js
 │   │   │   ├── vscode-secret.js # VS Code secret 解密工具（DPAPI + AES-GCM）
 │   │   │   ├── reports.js      # 上报存储（JSONL，幂等）
+│   │   │   ├── custom-prices.js # 自定义模型单价（覆盖默认价表）
 │   │   │   ├── stats.js        # 多源合并聚合
-│   │   │   └── prices.json     # 官方市场价配置
-│   │   └── routes/             # stats 统计 / usage 上报
-│   ├── scripts/                # build-exe.js / build-setup.js
-│   ├── installer/              # tokenview.iss + TokenView-run.vbs
-│   └── dist/                   # 构建产物（TokenView.exe / TokenView-Setup.exe）
+│   │   │   └── prices.json     # 官方市场价配置（默认价表）
+│   │   └── routes/             # stats 统计（含价格设置） / usage 上报
+│   ├── scripts/                # build-exe.js / build-setup.js（服务版 SEA 构建）
+│   └── installer/              # tokenview.iss（服务版静默安装包）
 ├── web/                        # 前端（Vue3 + Vite + ECharts）
 │   └── src/
 │       ├── views/Dashboard.vue
-│       ├── components/         # KPI / 趋势 / 占比 / 排行 / 工具统计 / 市场价 / 明细
+│       ├── components/         # KPI / 趋势 / 占比 / 排行 / 工具统计 / 市场价（可编辑）/ 明细
 │       ├── api/ utils/ styles/
 └── README.md
 ```
@@ -246,16 +262,19 @@ tokenView/
 该工具本地无用量数据（会话在云端 / 未安装 / 缓存仅含配额），通过上报接口带 `tool` 字段即可统计；工具统计面板状态会实时变为"有数据"。
 
 **Q：费用显示不准？**
-费用是按官方市场价的估算值。中转渠道（AkuCb AI 等）实际费率不同时，修改 `server/src/data/prices.json` 对应模型单价即可。
+费用是按官方市场价的估算值。中转渠道（AkuCb AI 等）实际费率不同时，直接在「模型市场价参考」面板点「编辑」覆盖该模型单价（带「自定义」标记，可随时恢复默认）；也可以修改 `server/src/data/prices.json` 默认价表。
 
 **Q：数据存在哪里？**
-安装版：`%LOCALAPPDATA%\TokenView\data\reports.jsonl`；绿色版：exe 同目录 `data/`；可用 `--data-dir` 指定。日志：`--log` 参数启用后写入 `<数据目录上级>/logs/`。
+桌面版与安装版：`%LOCALAPPDATA%\TokenView\data\`；绿色单文件：exe 同目录 `data/`；可用 `--data-dir` 指定。自定义模型单价存于同目录 `custom-prices.json`。
 
-**Q：端口被占用？**
+**Q：桌面版的日志和端口在哪？**
+日志自动记录在 `%LOCALAPPDATA%\TokenView\logs\`（含每次启动的实际端口）。桌面版内嵌服务默认使用**随机空闲端口**（仅本机回环访问，零冲突）；如需固定端口，启动时传 `--port` 或设置环境变量 `TOKENVIEW_PORT`。
+
+**Q：端口被占用？（无窗口服务模式）**
 自动递增探测（3000→3010）；或 `--port` 显式指定。
 
 **Q：重复双击启动了多个实例？**
-单实例保护：第二个实例检测到已在运行，仅打开浏览器后退出。
+不会。单实例保护：第二个实例检测到已在运行，仅聚焦已开窗口后退出。
 
 ---
 
@@ -266,5 +285,6 @@ tokenView/
 | 前端 | Vue 3 + Vite + ECharts + Axios |
 | 后端 | Node.js + Express（依赖仅 express + dotenv） |
 | 数据访问 | Node 内置 `node:sqlite` + JSONL 扫描（只读） |
+| 桌面端 | Electron 43（无边框窗口 + 内嵌服务）+ @electron/packager |
 | 单文件打包 | Node SEA + esbuild + postject |
-| 安装包 | Inno Setup 6 |
+| 安装包 | Inno Setup 6（深色自定义向导 + 品牌侧栏） |
