@@ -21,7 +21,7 @@
             v-for="d in dayOptions" :key="d"
             :class="{ active: days === d }"
             @click="setDays(d)"
-          >近 {{ d }} 天</button>
+          >{{ d === 'all' ? '全部' : `近 ${d} 天` }}</button>
         </div>
         <select
           class="refresh-select"
@@ -94,7 +94,7 @@ import {
   fetchUsage, fetchChannelList, fetchPrices, fetchTools
 } from '../api';
 
-const dayOptions = [7, 30, 90];
+const dayOptions = [7, 30, 90, 'all'];
 const days = ref(7);
 const granularity = ref('day');
 const loading = ref(false);

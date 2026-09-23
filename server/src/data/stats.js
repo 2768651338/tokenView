@@ -143,9 +143,10 @@ async function getAllRows(startMs = 0, endMs = Infinity) {
 
 /* ---------- 时间工具 ---------- */
 
-/** 解析时间范围：最近 N 天（含今天），返回 [startMs, endMs] */
+/** 解析时间范围：最近 N 天（含今天），返回 [startMs, endMs]；'all' 表示全部数据 */
 function parseRange(days = 7) {
   const end = Date.now();
+  if (days === 'all') return [0, end];
   const start = new Date();
   start.setDate(start.getDate() - (Number(days) - 1));
   start.setHours(0, 0, 0, 0);
@@ -236,7 +237,7 @@ async function getOverview(days = 30) {
     today_calls: allRows.filter((r) => r.createdAt >= todayMs).length,
     today_delta: todayDelta === null ? null : Number(todayDelta.toFixed(2)),
     avg_daily_tokens: Math.round(avgDailyTokens),
-    range_days: Number(days)
+    range_days: days === 'all' ? null : Number(days)
   };
 }
 
@@ -258,14 +259,24 @@ async function getTrend(days = 30, granularity = 'day', channel = '') {
   let list = [...buckets.values()].sort((a, b) => a.label < b.label ? -1 : 1);
   // 补齐缺失日期（按天粒度），保证曲线连续
   if (granularity === 'day') {
+    // 'all' 范围 start 为 0（1970 年），只能从最早有数据的一天开始补齐，否则会生成几万个空桶
+    let fillStart = start;
+    if (days === 'all') {
+      if (!rows.length) return { granularity, days: null, list: [] };
+      let earliestMs = Infinity;
+      for (const r of rows) if (r.createdAt < earliestMs) earliestMs = r.createdAt;
+      const earliest = new Date(earliestMs);
+      earliest.setHours(0, 0, 0, 0);
+      fillStart = earliest.getTime();
+    }
     const map = new Map(list.map((b) => [b.label, b]));
     list = [];
-    for (let t = start; t <= end; t += 86400000) {
+    for (let t = fillStart; t <= end; t += 86400000) {
       const label = fmtDay(t);
       list.push(map.get(label) || { label, tokens: 0, cost: 0, calls: 0 });
     }
   }
-  return { granularity, days: Number(days), list };
+  return { granularity, days: days === 'all' ? null : Number(days), list };
 }
 
 /** 渠道维度统计 */

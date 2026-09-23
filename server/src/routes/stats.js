@@ -12,15 +12,18 @@ const wrap = (fn) => (req, res) => {
   });
 };
 
+// days 参数：'all' 表示全部数据，其余按最近 N 天处理（上限 365，非法值回退 fallback）
+const parseDays = (raw, fallback) => (raw === 'all' ? 'all' : Math.min(Number(raw) || fallback, 365));
+
 // ---------- 核心 KPI 汇总 ----------
 router.get('/overview', wrap(async (req, res) => {
-  const days = Math.min(Number(req.query.days) || 30, 365);
+  const days = parseDays(req.query.days, 30);
   res.json({ code: 0, data: await stats.getOverview(days) });
 }));
 
 // ---------- 时间趋势 ----------
 router.get('/trend', wrap(async (req, res) => {
-  const days = Math.min(Number(req.query.days) || 30, 365);
+  const days = parseDays(req.query.days, 30);
   const granularity = ['day', 'week', 'month'].includes(req.query.granularity)
     ? req.query.granularity : 'day';
   res.json({
@@ -31,13 +34,13 @@ router.get('/trend', wrap(async (req, res) => {
 
 // ---------- 渠道维度统计 ----------
 router.get('/channels', wrap(async (req, res) => {
-  const days = Math.min(Number(req.query.days) || 7, 365);
+  const days = parseDays(req.query.days, 7);
   res.json({ code: 0, data: await stats.getChannels(days) });
 }));
 
 // ---------- 模型 Top 排行 ----------
 router.get('/models', wrap(async (req, res) => {
-  const days = Math.min(Number(req.query.days) || 7, 365);
+  const days = parseDays(req.query.days, 7);
   const limit = Math.min(Number(req.query.limit) || 10, 50);
   res.json({ code: 0, data: await stats.getModels(days, limit) });
 }));

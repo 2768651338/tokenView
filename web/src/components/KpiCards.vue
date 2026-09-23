@@ -39,12 +39,17 @@ function deltaText(d) {
   return `${sign}${d.toFixed(1)}% 较昨日`;
 }
 
+// range_days 为 null 表示统计范围为「全部」，否则为「近 N 天」
+function rangeText(o) {
+  return o.range_days == null ? '全部' : `近 ${o.range_days || 30} 天`;
+}
+
 const cards = computed(() => {
   const o = props.overview || {};
   return [
     {
       key: 'total', label: '累计 Token 消耗', value: fmtTokens(o.total_tokens),
-      sub: `近 ${o.range_days || 30} 天 ${fmtTokens(o.period_tokens)}`
+      sub: `${rangeText(o)} ${fmtTokens(o.period_tokens)}`
     },
     {
       key: 'today', label: '今日消耗', value: fmtTokens(o.today_tokens),
@@ -52,7 +57,7 @@ const cards = computed(() => {
     },
     {
       key: 'cost', label: '累计费用', value: fmtCost(o.total_cost),
-      sub: `按市场价估算 · 近 ${o.range_days || 30} 天 ${fmtCost(o.period_cost)}`
+      sub: `按市场价估算 · ${rangeText(o)} ${fmtCost(o.period_cost)}`
     },
     {
       key: 'calls', label: '调用总次数', value: fmtNum(o.total_calls),
