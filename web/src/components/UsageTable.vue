@@ -20,6 +20,13 @@
       <span style="color:var(--text-faint);align-self:center;">至</span>
       <input type="date" v-model="filters.end" @change="onFilterChange" title="结束日期" />
       <button class="pager-btn" @click="refresh">刷新</button>
+      <span style="flex:1;"></span>
+      <button class="pager-btn" :disabled="exporting" @click="exportRows('csv')" title="按当前筛选导出全部（封顶 10 万行）">
+        {{ exporting ? '导出中...' : '导出 CSV' }}
+      </button>
+      <button class="pager-btn" :disabled="exporting" @click="exportRows('json')" title="按当前筛选导出全部（封顶 10 万行）">
+        导出 JSON
+      </button>
     </div>
 
     <div class="table-wrap">
@@ -72,8 +79,10 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { fmtNum, fmtLatency } from '../utils/format';
+import { downloadUsageExport } from '../api';
+import { saveBlobResponse } from '../utils/download';
 
 const props = defineProps({
   list: { type: Array, default: () => [] },
@@ -86,6 +95,7 @@ const props = defineProps({
 const emit = defineEmits(['page-change', 'filter-change', 'refresh']);
 
 const filters = reactive({ channel: '', source: '', status: '', start: '', end: '' });
+const exporting = ref(false);
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)));
 
@@ -94,6 +104,20 @@ function onFilterChange() {
 }
 function refresh() {
   emit('refresh');
+}
+
+/** 按当前筛选导出全部明细（服务端封顶 10 万行） */
+async function exportRows(format) {
+  exporting.value = true;
+  try {
+    const res = await downloadUsageExport({ ...filters, format });
+    saveBlobResponse(res, `tokenview-usage.${format}`);
+  } catch (e) {
+    console.error('导出失败:', e.message);
+    alert('导出失败：' + (e.message || '未知错误'));
+  } finally {
+    exporting.value = false;
+  }
 }
 </script>
 

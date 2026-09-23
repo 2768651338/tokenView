@@ -51,9 +51,12 @@ const source = createJsonlSource({
     const ts = obj.timestamp;
     if (!ts) return;
     const u = msg.usage || {};
-    const prompt = (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0);
+    // 口径统一：promptTokens 为纯输入（不含缓存），缓存读写单独成列，费用在 stats 层按缓存价率计算
+    const cacheRead = Number(u.cache_read_input_tokens) || 0;
+    const cacheWrite = Number(u.cache_creation_input_tokens) || 0;
+    const prompt = Number(u.input_tokens) || 0;
     const completion = Number(u.output_tokens) || 0;
-    const total = prompt + completion + (Number(u.cache_read_input_tokens) || 0);
+    const total = prompt + completion + cacheRead + cacheWrite;
     emit({
       requestId: 'claude-code:' + (msg.id || `${path.basename(meta.file)}:${ts}`),
       channel: inferChannel(msg.model),
@@ -62,10 +65,14 @@ const source = createJsonlSource({
       source: 'claude-code',
       promptTokens: prompt,
       completionTokens: completion,
+      cacheReadTokens: cacheRead,
+      cacheWriteTokens: cacheWrite,
       totalTokens: total,
+      // 会话文件按项目目录分文件夹存放（目录名为编码后的项目路径）
+      project: path.basename(path.dirname(meta.file)).slice(0, 128),
       latencyMs: 0,
       status: 1,
-      remark: `cache_read=${Number(u.cache_read_input_tokens) || 0} cache_write=${Number(u.cache_creation_input_tokens) || 0}`.slice(0, 255),
+      remark: '',
       createdAt: Date.parse(ts)
     });
   }

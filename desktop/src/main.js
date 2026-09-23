@@ -3,7 +3,7 @@
  * 内嵌启动 Express 服务（随机空闲端口）+ 原生窗口加载，不再打开浏览器
  * 注：本文件构建时与 server.cjs、web/ 装配到同一目录，因此使用相对路径静态引用
  */
-const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, Notification, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -12,6 +12,10 @@ process.noDeprecation = true;
 
 let mainWindow = null;
 let serverHandle = null;
+let tray = null;
+let closeToTrayEnabled = false; // 设置页开关（经 preload IPC 同步），默认关闭 = 关闭窗口即退出
+let quitting = false;           // before-quit 置位：区分"用户点关闭"与"真正退出"
+let trayNoticeShown = false;    // 首次最小化到托盘时提示一次
 
 /** 解析端口：--port 参数 / TOKENVIEW_PORT 环境变量；缺省 0 = 系统分配随机空闲端口 */
 function resolvePort() {
@@ -30,6 +34,52 @@ function resolveWebDist() {
   const devDist = path.join(__dirname, '..', '..', 'web', 'dist');
   if (fs.existsSync(path.join(devDist, 'index.html'))) return devDist;
   return null;
+}
+
+/** 托盘图标：装配后与本文件同级 tokenview.ico；缺失则不创建托盘 */
+function resolveTrayIcon() {
+  const p = path.join(__dirname, 'tokenview.ico');
+  return fs.existsSync(p) ? p : null;
+}
+
+function showMainWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  const iconPath = resolveTrayIcon();
+  if (!iconPath || tray) return;
+  try {
+    tray = new Tray(iconPath);
+    tray.setToolTip('TokenView · 多渠道 Token 消耗监控');
+    tray.on('click', showMainWindow);
+    tray.on('right-click', () => {
+      const menu = Menu.buildFromTemplate([
+        { label: '显示主窗口', click: showMainWindow },
+        {
+          label: '关闭时最小化到托盘',
+          type: 'checkbox',
+          checked: closeToTrayEnabled,
+          click: (item) => { closeToTrayEnabled = item.checked; }
+        },
+        { type: 'separator' },
+        {
+          label: '退出',
+          click: () => {
+            quitting = true;
+            app.quit();
+          }
+        }
+      ]);
+      tray.popUpContextMenu(menu);
+    });
+  } catch (e) {
+    console.warn('[TokenView] 托盘创建失败:', e.message);
+    tray = null;
+  }
 }
 
 function createWindow(url) {
@@ -53,7 +103,8 @@ function createWindow(url) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      spellcheck: false
+      spellcheck: false,
+      preload: path.join(__dirname, 'preload.js')
     }
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
@@ -67,6 +118,23 @@ function createWindow(url) {
     } catch { /* 非法 URL 直接忽略 */ }
     return { action: 'deny' };
   });
+  // 关闭窗口：若启用"最小化到托盘"则隐藏而不是退出（保持服务运行）
+  mainWindow.on('close', (e) => {
+    if (!closeToTrayEnabled || quitting || tray === null) return;
+    e.preventDefault();
+    mainWindow.hide();
+    if (!trayNoticeShown) {
+      trayNoticeShown = true;
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'TokenView 仍在运行',
+            body: '已最小化到系统托盘，双击托盘图标可重新打开；退出请从托盘菜单选择。'
+          }).show();
+        }
+      } catch { /* 通知失败不影响 */ }
+    }
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.loadURL(url);
 }
@@ -76,13 +144,7 @@ if (!gotLock) {
   app.quit();
 } else {
   // 第二次双击 exe：聚焦已开窗口，而不是再起一个服务
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
+  app.on('second-instance', showMainWindow);
 
   Menu.setApplicationMenu(null);
 
@@ -102,8 +164,18 @@ if (!gotLock) {
       app.quit();
       return;
     }
+    createTray();
     createWindow(url);
   });
+
+  // 设置页的"关闭时最小化到托盘"开关
+  ipcMain.handle('tokenview:get-close-to-tray', () => closeToTrayEnabled);
+  ipcMain.handle('tokenview:set-close-to-tray', (_e, v) => {
+    closeToTrayEnabled = !!v;
+    return closeToTrayEnabled;
+  });
+
+  app.on('before-quit', () => { quitting = true; });
 
   app.on('window-all-closed', () => {
     if (serverHandle && serverHandle.server) {

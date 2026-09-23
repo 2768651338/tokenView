@@ -28,7 +28,7 @@ function load() {
 }
 
 /** 写入一条上报记录，重复 request_id 返回 null */
-function append({ channel, model, promptTokens, completionTokens, latencyMs, status, requestId, tool = '', remark = '' }) {
+function append({ channel, model, promptTokens, completionTokens, cacheReadTokens = 0, cacheWriteTokens = 0, latencyMs, status, requestId, tool = '', remark = '' }) {
   load();
   if (state.ids.has(requestId)) return null;
   const row = {
@@ -40,7 +40,9 @@ function append({ channel, model, promptTokens, completionTokens, latencyMs, sta
     tool, // 工具标识（Trae / kimi / ...），用于工具维度统计
     promptTokens,
     completionTokens,
-    totalTokens: promptTokens + completionTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens: promptTokens + completionTokens + cacheReadTokens + cacheWriteTokens,
     cost: 0, // 费用由 stats 层按单价计算
     latencyMs,
     status: status ? 1 : 0,

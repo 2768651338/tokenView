@@ -11,16 +11,20 @@ const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 const { dataDir } = require('../runtime');
+const settings = require('./settings');
 
 const ENDPOINT = 'https://modelradar.cn/data/models.json';
 const ALLOWED_HOST = 'modelradar.cn';
 const TIMEOUT_MS = 15000;
 const FILE = () => path.join(dataDir(), 'modelradar-prices.json');
 
-/** 默认汇率：美元 → 人民币（可用环境变量 MODELRADAR_FX_USD_CNY 覆盖） */
+/** 默认汇率：美元 → 人民币（覆盖顺序：settings.json > 环境变量 MODELRADAR_FX_USD_CNY > 默认 6.8） */
+const DEFAULT_FX = 6.8;
 function fxUsdCny() {
+  const fromSettings = settings.getFxRate();
+  if (fromSettings !== null) return fromSettings;
   const v = Number(process.env.MODELRADAR_FX_USD_CNY);
-  return Number.isFinite(v) && v > 0 ? v : 6.8;
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_FX;
 }
 
 /** 校验请求目标：仅 https + host 白名单 + DNS 解析非私有/保留地址 */
@@ -95,6 +99,7 @@ async function syncFromModelRadar() {
 
   const fx = fxUsdCny();
   const prices = {};
+  const usdPrices = {};
   let count = 0;
   for (const m of data.models) {
     if (!m || typeof m.id !== 'string' || !m.id.trim()) continue;
@@ -106,6 +111,8 @@ async function syncFromModelRadar() {
       input: Number((usdIn * fx / 1000).toFixed(6)),
       output: Number((usdOut * fx / 1000).toFixed(6))
     };
+    // 保留 USD 原始价，汇率调整后可本地重算而无需重新联网
+    usdPrices[m.id.trim()] = { input: usdIn, output: usdOut };
     count++;
   }
   if (count === 0) throw new Error('远端数据中没有可用的价格条目');
@@ -116,7 +123,8 @@ async function syncFromModelRadar() {
     source: 'modelradar.cn',
     effectiveDate: data.effectiveDate || null,
     fxUsdCny: fx,
-    prices
+    prices,
+    usdPrices
   };
   const file = FILE();
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -163,4 +171,33 @@ function getOnlineMeta() {
   return o ? { syncedAt: o.syncedAt, effectiveDate: o.effectiveDate, fxUsdCny: o.fxUsdCny, source: o.source } : null;
 }
 
-module.exports = { syncFromModelRadar, getOnlinePrices, getOnlineMeta };
+/**
+ * 按新汇率本地重算在线价目（不联网，依赖快照中的 usdPrices 原始价）。
+ * 旧版快照（无 usdPrices）无法重算，提示先同步一次。
+ * @returns {{ count: number, fx: number }}
+ */
+function applyFxRate(rate) {
+  const o = getOnline();
+  if (!o || !o.usdPrices || typeof o.usdPrices !== 'object') {
+    throw new Error('当前快照不含 USD 原始价，请先执行一次「同步在线价格」');
+  }
+  let count = 0;
+  const prices = {};
+  for (const [id, p] of Object.entries(o.usdPrices)) {
+    const usdIn = Number(p && p.input);
+    const usdOut = Number(p && p.output);
+    if (!Number.isFinite(usdIn) || !Number.isFinite(usdOut)) continue;
+    prices[id] = {
+      input: Number((usdIn * rate / 1000).toFixed(6)),
+      output: Number((usdOut * rate / 1000).toFixed(6))
+    };
+    count++;
+  }
+  if (!count) throw new Error('快照中没有可重算的价格条目');
+  const file = FILE();
+  fs.writeFileSync(file, JSON.stringify({ ...o, fxUsdCny: rate, prices }, null, 2));
+  snapCache.mtimeMs = null; // 强制下次重读
+  return { count, fx: rate };
+}
+
+module.exports = { syncFromModelRadar, getOnlinePrices, getOnlineMeta, applyFxRate, fxUsdCny };

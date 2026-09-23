@@ -32,8 +32,10 @@ require('./make-installer-art.js');
 fs.rmSync(APP, { recursive: true, force: true });
 fs.mkdirSync(APP, { recursive: true });
 
-// 2. 主进程入口 + 包描述
+// 2. 主进程入口 + 预加载脚本 + 托盘图标 + 包描述
 fs.copyFileSync(path.join(DESKTOP, 'src', 'main.js'), path.join(APP, 'main.js'));
+fs.copyFileSync(path.join(DESKTOP, 'src', 'preload.js'), path.join(APP, 'preload.js'));
+fs.copyFileSync(ICON, path.join(APP, 'tokenview.ico'));
 fs.writeFileSync(path.join(APP, 'package.json'), JSON.stringify({
   name: 'tokenview',
   productName: 'TokenView',

@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const reports = require('../data/reports');
 const priceTable = require('../data/custom-prices');
 const stats = require('../data/stats');
@@ -6,13 +7,31 @@ const stats = require('../data/stats');
 const router = express.Router();
 
 /**
+ * 上报鉴权：设置环境变量 TOKENVIEW_REPORT_TOKEN 后启用，
+ * 调用方需携带请求头 x-report-token。未设置时保持开放（本机使用场景）。
+ * 双方先做 SHA-256 再比较：长度恒定，可用 timingSafeEqual 防时序侧信道。
+ */
+function assertReportAuth(req, res) {
+  const expected = String(process.env.TOKENVIEW_REPORT_TOKEN || '');
+  if (!expected) return true;
+  const got = String(req.get('x-report-token') || '');
+  const a = crypto.createHash('sha256').update(expected).digest();
+  const b = crypto.createHash('sha256').update(got).digest();
+  if (crypto.timingSafeEqual(a, b)) return true;
+  res.status(401).json({ code: 401, message: '上报鉴权失败：缺少或错误的 x-report-token 请求头' });
+  return false;
+}
+
+/**
  * 上报一次 token 消耗（写入本地 JSONL，实时生效）
  * POST /api/usage/report
  * body: {
  *   channel: "deepseek",              // 渠道名称
  *   model: "deepseek-chat",           // 模型名称
- *   prompt_tokens: 1234,              // 输入 tokens
+ *   prompt_tokens: 1234,              // 输入 tokens（不含缓存）
  *   completion_tokens: 567,           // 输出 tokens
+ *   cache_read_tokens: 0,             // 可选，缓存读 tokens
+ *   cache_write_tokens: 0,            // 可选，缓存写 tokens
  *   latency_ms: 850,                  // 可选，延迟
  *   status: 1,                        // 可选，1成功 0失败，默认 1
  *   request_id: "req_xxx",            // 可选，未传则自动生成
@@ -21,11 +40,14 @@ const router = express.Router();
  */
 router.post('/report', (req, res) => {
   try {
+    if (!assertReportAuth(req, res)) return;
     const {
       channel: channelName = '',
       model: modelName = '',
       prompt_tokens = 0,
       completion_tokens = 0,
+      cache_read_tokens = 0,
+      cache_write_tokens = 0,
       latency_ms = 0,
       status = 1,
       request_id = '',
@@ -38,7 +60,9 @@ router.post('/report', (req, res) => {
     }
     const pTokens = Math.max(0, Number(prompt_tokens) || 0);
     const cTokens = Math.max(0, Number(completion_tokens) || 0);
-    if (pTokens + cTokens <= 0) {
+    const crTokens = Math.max(0, Number(cache_read_tokens) || 0);
+    const cwTokens = Math.max(0, Number(cache_write_tokens) || 0);
+    if (pTokens + cTokens + crTokens + cwTokens <= 0) {
       return res.status(400).json({ code: 400, message: 'token 数量必须大于 0' });
     }
     const requestId = String(request_id).trim() || reports.newRequestId();
@@ -48,6 +72,8 @@ router.post('/report', (req, res) => {
       model: String(modelName).trim(),
       promptTokens: pTokens,
       completionTokens: cTokens,
+      cacheReadTokens: crTokens,
+      cacheWriteTokens: cwTokens,
       latencyMs: Math.max(0, Number(latency_ms) || 0),
       status: status ? 1 : 0,
       requestId,
@@ -66,7 +92,13 @@ router.post('/report', (req, res) => {
     stats.invalidate(); // 新上报进入聚合缓存
 
     const p = priceTable.getPrices()[row.model] || {};
-    const cost = Number(((row.promptTokens * (Number(p.input) || 0) + row.completionTokens * (Number(p.output) || 0)) / 1000).toFixed(4));
+    const inputPrice = Number(p.input) || 0;
+    const cost = Number(((
+      row.promptTokens * inputPrice
+      + row.completionTokens * (Number(p.output) || 0)
+      + row.cacheReadTokens * inputPrice * 0.1
+      + row.cacheWriteTokens * inputPrice * 1.25
+    ) / 1000).toFixed(4));
     res.json({
       code: 0,
       message: '上报成功',

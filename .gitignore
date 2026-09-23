@@ -24,3 +24,6 @@ Thumbs.db
 /desktop/.mimosa
 /server/.mimosa
 /web/src/.mimosa
+
+# Mimosa hook 状态
+.mimosa/

@@ -19,8 +19,11 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="t in tools" :key="t.id">
-            <td style="font-weight:600;">{{ t.name }}</td>
+          <tr v-for="t in tools" :key="t.id" :title="t.id === 'cc-switch' ? CC_SWITCH_NOTE : ''">
+            <td style="font-weight:600;">
+              {{ t.name }}
+              <span v-if="t.id === 'cc-switch'" class="overlap-mark" :title="CC_SWITCH_NOTE">同源</span>
+            </td>
             <td><span class="tag" :class="statusClass(t.status)">{{ t.status }}</span></td>
             <td style="text-align:right;">{{ fmtNum(t.calls) }}</td>
             <td style="text-align:right;font-weight:600;">{{ fmtTokens(t.tokens) }}</td>
@@ -43,6 +46,9 @@ defineProps({
   tools: { type: Array, default: () => [] }
 });
 
+// CC Switch 与 Claude Code / Codex 读取的是同一批会话日志，数据同源重叠是既有的全量导入设计
+const CC_SWITCH_NOTE = 'CC Switch 的数据与 Claude Code / Codex 同源，合计时存在重叠，属预期行为';
+
 function statusClass(s) {
   if (s === '有数据') return 'tag-ok';
   if (s === '解密失败') return 'tag-fail';
@@ -52,4 +58,14 @@ function statusClass(s) {
 
 <style scoped>
 .tag-pending { color: var(--text-sub); background: rgba(139, 150, 173, 0.12); }
+.overlap-mark {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-faint);
+  border: 1px solid var(--card-border);
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: help;
+}
 </style>

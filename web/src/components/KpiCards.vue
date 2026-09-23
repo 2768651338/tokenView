@@ -49,11 +49,11 @@ const cards = computed(() => {
   return [
     {
       key: 'total', label: '累计 Token 消耗', value: fmtTokens(o.total_tokens),
-      sub: `${rangeText(o)} ${fmtTokens(o.period_tokens)}`
+      sub: `${rangeText(o)} ${fmtTokens(o.period_tokens)} · 入 ${fmtTokens(o.period_prompt_tokens)} / 出 ${fmtTokens(o.period_completion_tokens)}`
     },
     {
       key: 'today', label: '今日消耗', value: fmtTokens(o.today_tokens),
-      sub: `${fmtNum(o.today_calls)} 次调用`, delta: o.today_delta
+      sub: `${fmtNum(o.today_calls)} 次调用 · 费用 ${fmtCost(o.today_cost)}`, delta: o.today_delta
     },
     {
       key: 'cost', label: '累计费用', value: fmtCost(o.total_cost),

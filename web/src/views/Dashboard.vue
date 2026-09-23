@@ -34,15 +34,29 @@
         <button class="refresh-btn" :disabled="loading" @click="refreshAll">
           {{ loading ? '刷新中...' : '⟳ 刷新' }}
         </button>
+        <button class="refresh-btn" title="设置（预算 / 汇率 / 数据源健康）" @click="showSettings = true">设置</button>
       </div>
     </header>
+
+    <!-- 预算告警横幅 -->
+    <div v-if="budget && budget.level && budget.level !== 'none'" class="budget-banner" :class="budget.level">
+      <template v-if="budgetBannerText">{{ budgetBannerText }}</template>
+      <button class="budget-banner-btn" @click="showSettings = true">调整预算</button>
+    </div>
 
     <!-- KPI 卡片 -->
     <KpiCards :overview="overview" />
 
     <!-- 趋势 + 占比 -->
     <div class="main-grid">
-      <TrendChart :trend="trend" :granularity="granularity" @granularity-change="setGranularity" />
+      <TrendChart
+        :trend="trend"
+        :granularity="granularity"
+        :channel="trendChannel"
+        :channel-list="channelList"
+        @granularity-change="setGranularity"
+        @channel-change="setTrendChannel"
+      />
       <ChannelPie :channels="channels" />
     </div>
 
@@ -50,6 +64,18 @@
     <div class="lower-grid">
       <TopRank :channels="channels" />
       <ModelBar :models="models" />
+    </div>
+
+    <!-- 时段热力图 + 延迟分析 -->
+    <div class="lower-grid hm-grid">
+      <Heatmap :data="heatmap" :days="days" />
+      <LatencyStats :data="latency" :days="days" />
+    </div>
+
+    <!-- 项目消耗 + 月度账单 -->
+    <div class="lower-grid">
+      <ProjectStats :list="projects" />
+      <BillPanel />
     </div>
 
     <!-- 工具统计 + 模型市场价参考（两列紧凑并排） -->
@@ -76,6 +102,9 @@
     <footer style="text-align:center;color:var(--text-faint);font-size:11px;padding-bottom:20px;">
       TokenView · © 田小橙 QQ2768651338 · {{ refreshLabel }}
     </footer>
+
+    <!-- 设置弹窗 -->
+    <SettingsModal :visible="showSettings" @close="showSettings = false" @budget-changed="loadBudget" />
   </div>
 </template>
 
@@ -89,15 +118,24 @@ import TopRank from '../components/TopRank.vue';
 import ToolStats from '../components/ToolStats.vue';
 import PriceTable from '../components/PriceTable.vue';
 import UsageTable from '../components/UsageTable.vue';
+import Heatmap from '../components/Heatmap.vue';
+import LatencyStats from '../components/LatencyStats.vue';
+import ProjectStats from '../components/ProjectStats.vue';
+import BillPanel from '../components/BillPanel.vue';
+import SettingsModal from '../components/SettingsModal.vue';
 import {
   fetchOverview, fetchTrend, fetchChannels, fetchModels,
-  fetchUsage, fetchChannelList, fetchPrices, fetchTools
+  fetchUsage, fetchChannelList, fetchPrices, fetchTools,
+  fetchHeatmap, fetchLatency, fetchProjects, fetchBudget
 } from '../api';
+import { fmtCost } from '../utils/format';
 
 const dayOptions = [7, 30, 90, 'all'];
 const days = ref(7);
 const granularity = ref('day');
+const trendChannel = ref('');
 const loading = ref(false);
+const showSettings = ref(false);
 
 const overview = ref({});
 const trend = ref({ list: [] });
@@ -106,6 +144,10 @@ const models = ref([]);
 const prices = ref({ list: [] });
 const tools = ref([]);
 const channelList = ref([]);
+const heatmap = ref({ list: [], max_tokens: 0, max_calls: 0 });
+const latency = ref({ overall: null, channels: [] });
+const projects = ref([]);
+const budget = ref(null);
 
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
 const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
@@ -185,7 +227,7 @@ async function loadOverview() {
   overview.value = await fetchOverview(days.value);
 }
 async function loadTrend() {
-  trend.value = await fetchTrend({ days: days.value, granularity: granularity.value });
+  trend.value = await fetchTrend({ days: days.value, granularity: granularity.value, channel: trendChannel.value });
 }
 async function loadChannels() {
   channels.value = await fetchChannels(days.value);
@@ -198,6 +240,19 @@ async function loadPrices() {
 }
 async function loadTools() {
   tools.value = await fetchTools();
+}
+async function loadHeatmap() {
+  heatmap.value = await fetchHeatmap(days.value);
+}
+async function loadLatency() {
+  latency.value = await fetchLatency(days.value);
+}
+async function loadProjects() {
+  projects.value = await fetchProjects(days.value, 15);
+}
+async function loadBudget() {
+  budget.value = await fetchBudget();
+  maybeNotifyBudget();
 }
 async function loadUsage() {
   const data = await fetchUsage({
@@ -216,7 +271,11 @@ async function loadChannelList() {
 async function refreshAll() {
   loading.value = true;
   try {
-    await Promise.all([loadOverview(), loadTrend(), loadChannels(), loadModels(), loadPrices(), loadTools()]);
+    await Promise.all([
+      loadOverview(), loadTrend(), loadChannels(), loadModels(),
+      loadPrices(), loadTools(), loadHeatmap(), loadLatency(),
+      loadProjects(), loadBudget()
+    ]);
   } catch (e) {
     console.error('数据加载失败:', e.message);
   } finally {
@@ -232,6 +291,10 @@ function setGranularity(g) {
   granularity.value = g;
   loadTrend();
 }
+function setTrendChannel(c) {
+  trendChannel.value = c;
+  loadTrend();
+}
 function setUsagePage(p) {
   usage.page = p;
   loadUsage();
@@ -240,6 +303,35 @@ function setUsageFilter(f) {
   Object.assign(usageFilter, f);
   usage.page = 1;
   loadUsage();
+}
+
+/* ---- 预算告警：横幅文案 + 桌面通知（每等级每天最多提醒一次） ---- */
+const budgetBannerText = computed(() => {
+  const b = budget.value;
+  if (!b || !b.level || b.level === 'none') return '';
+  const parts = [];
+  if (b.daily > 0 && b.daily_ratio >= 80) {
+    parts.push(`今日费用 ${fmtCost(b.today_cost)} 已达日预算 ${fmtCost(b.daily)} 的 ${Math.round(b.daily_ratio)}%`);
+  }
+  if (b.monthly > 0 && b.monthly_ratio >= 80) {
+    parts.push(`本月费用 ${fmtCost(b.month_cost)} 已达月预算 ${fmtCost(b.monthly)} 的 ${Math.round(b.monthly_ratio)}%`);
+  }
+  return parts.join('；');
+});
+
+function maybeNotifyBudget() {
+  const b = budget.value;
+  if (!b || !b.enabled || !b.level || b.level === 'none') return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `tokenview-notified-${b.level}-${day}`;
+  try {
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, '1');
+  } catch { /* localStorage 不可用时不做节流 */ }
+  const title = b.level === 'danger' ? 'TokenView 预算告警' : 'TokenView 预算提醒';
+  const body = budgetBannerText.value || '费用接近预算';
+  try { new Notification(title, { body, silent: b.level !== 'danger' }); } catch { /* 通知失败静默 */ }
 }
 
 onMounted(() => {
@@ -270,4 +362,39 @@ onBeforeUnmount(() => {
   color: var(--accent);
 }
 .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 预算告警横幅：扁平左边线，无阴影无渐变 */
+.budget-banner {
+  margin: 10px 24px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--card-border);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  font-size: 12.5px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.budget-banner.danger { border-left-color: var(--red); }
+.budget-banner-btn {
+  border: 1px solid var(--card-border);
+  background: var(--bg-0);
+  color: var(--text-sub);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.budget-banner-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 热力图更宽，延迟面板相对窄 */
+.hm-grid { grid-template-columns: 1.5fr 1fr; }
+@media (max-width: 1400px) {
+  .hm-grid { grid-template-columns: 1fr; }
+}
 </style>

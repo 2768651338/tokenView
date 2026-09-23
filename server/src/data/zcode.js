@@ -64,10 +64,14 @@ function channelOf(providerId) {
 /** 原始记录 -> 统一行结构 */
 function toRow(r) {
   const { channel, kind } = channelOf(r.provider_id);
-  const prompt = Number(r.input_tokens) || 0;
+  // ZCode 的 input_tokens 已含缓存读（OpenAI 口径，经 computed_total_tokens 对账确认），
+  // 拆分后 promptTokens 只保留纯输入；缓存写列当前恒为 0，按"input 不含缓存写"处理
+  const inputRaw = Number(r.input_tokens) || 0;
+  const cacheRead = Number(r.cache_read_input_tokens) || 0;
+  const cacheWrite = Number(r.cache_creation_input_tokens) || 0;
+  const prompt = Math.max(0, inputRaw - cacheRead);
   const completion = (Number(r.output_tokens) || 0) + (Number(r.reasoning_tokens) || 0);
-  const total = Number(r.computed_total_tokens) || 0
-    || (prompt + completion + (Number(r.cache_creation_input_tokens) || 0) + (Number(r.cache_read_input_tokens) || 0));
+  const total = Number(r.computed_total_tokens) || 0 || (prompt + completion + cacheWrite + cacheRead);
   return {
     requestId: 'zcode:' + r.id,
     channel,
@@ -76,7 +80,10 @@ function toRow(r) {
     source: 'zcode',
     promptTokens: prompt,
     completionTokens: completion,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
     totalTokens: total,
+    project: '',
     latencyMs: Number(r.duration_ms) || 0,
     status: r.status === 'completed' ? 1 : 0,
     remark: ['agent=' + (r.agent || ''), 'mode=' + (r.mode || ''), 'src=' + (r.query_source || ''), 'task=' + (r.task_type || '')].join(' ').slice(0, 255),

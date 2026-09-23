@@ -1,7 +1,7 @@
 ; TokenView 桌面版安装脚本（Inno Setup 6，per-user 免管理员）
 ; 与旧版（无窗口服务 + 浏览器）共用 AppId：原地升级替换，保留用户数据
 #define AppName "TokenView"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppPublisher "TokenView"
 
 [Setup]

@@ -1,7 +1,14 @@
 const express = require('express');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 const stats = require('../data/stats');
 const priceTable = require('../data/custom-prices');
 const modelradar = require('../data/modelradar');
+const settings = require('../data/settings');
+const budget = require('../data/budget');
+const usageExport = require('../data/usage-export');
 
 const router = express.Router();
 
@@ -113,6 +120,106 @@ router.get('/usage', wrap(async (req, res) => {
 // ---------- 渠道列表 ----------
 router.get('/channels/list', wrap(async (req, res) => {
   res.json({ code: 0, data: await stats.getChannelList() });
+}));
+
+// ---------- 时段热力图（星期 × 小时） ----------
+router.get('/heatmap', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  res.json({ code: 0, data: await stats.getHeatmap(days) });
+}));
+
+// ---------- 延迟分析（P50 / P95 / 均值） ----------
+router.get('/latency', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  res.json({ code: 0, data: await stats.getLatency(days) });
+}));
+
+// ---------- 项目维度统计 ----------
+router.get('/projects', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  res.json({ code: 0, data: await stats.getProjects(days, req.query.limit) });
+}));
+
+// ---------- 月度账单 ----------
+router.get('/bill/months', wrap(async (req, res) => {
+  res.json({ code: 0, data: await stats.getBillMonths() });
+}));
+
+router.get('/bill', wrap(async (req, res) => {
+  const bill = await stats.getBill(req.query.month);
+  if (bill.error) return res.status(400).json({ code: 400, message: bill.error });
+  res.json({ code: 0, data: bill });
+}));
+
+// ---------- 预算（配置 + 当前状态一并返回） ----------
+router.get('/budget', wrap(async (req, res) => {
+  res.json({ code: 0, data: await stats.getBudgetStatus() });
+}));
+
+router.post('/budget', wrap(async (req, res) => {
+  const { daily, monthly, enabled } = req.body || {};
+  budget.set({ daily, monthly, enabled });
+  res.json({ code: 0, message: '已保存', data: await stats.getBudgetStatus() });
+}));
+
+// ---------- 数据源健康 ----------
+router.get('/health', wrap(async (req, res) => {
+  res.json({ code: 0, data: await stats.getHealth() });
+}));
+
+// ---------- 应用设置（汇率覆盖等） ----------
+router.get('/settings', wrap(async (req, res) => {
+  res.json({
+    code: 0,
+    data: {
+      fx_rate: settings.getFxRate(),
+      fx_effective: modelradar.fxUsdCny()
+    }
+  });
+}));
+
+router.post('/settings/fx', wrap(async (req, res) => {
+  const { rate } = req.body || {};
+  const saved = settings.setFxRate(rate === null || rate === undefined || rate === '' ? null : rate);
+  // 快照含 USD 原始价时按新汇率本地重算；无快照/旧快照则等下次同步生效
+  let reconverted = 0;
+  let reconvertError = '';
+  try {
+    const r = modelradar.applyFxRate(modelradar.fxUsdCny());
+    reconverted = r.count;
+  } catch (e) {
+    reconvertError = e.message;
+  }
+  stats.invalidate();
+  res.json({ code: 0, message: '已保存', data: { ...saved, reconverted, reconvert_error: reconvertError } });
+}));
+
+// ---------- 明细导出（CSV，按当前筛选，封顶 10 万行） ----------
+router.get('/usage/export', wrap(async (req, res) => {
+  const rows = await stats.getUsageExport({
+    channel: req.query.channel || '',
+    status: req.query.status,
+    start: req.query.start || '',
+    end: req.query.end || '',
+    source: req.query.source || ''
+  });
+  // 序列化到临时文件后经 res.download 附件下发，发送完成即清理
+  const tmpPath = path.join(os.tmpdir(), `tokenview-usage-${crypto.randomBytes(6).toString('hex')}.csv`);
+  try {
+    fs.writeFileSync(tmpPath, usageExport.toCsv(rows));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    await new Promise((resolve) => {
+      res.download(tmpPath, `tokenview-usage-${stamp}.csv`, (err) => {
+        fs.unlink(tmpPath, () => { /* 忽略清理失败 */ });
+        if (err && !res.headersSent) res.status(500).json({ code: 500, message: '导出失败' });
+        resolve();
+      });
+    });
+  } catch (e) {
+    fs.unlink(tmpPath, () => { /* 忽略清理失败 */ });
+    throw e;
+  }
 }));
 
 module.exports = router;

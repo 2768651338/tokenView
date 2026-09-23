@@ -32,10 +32,11 @@ const source = createJsonlSource({
     ...collectRollouts(path.join(root, 'sessions')),
     ...collectRollouts(path.join(root, 'archived_sessions'))
   ],
-  createFileState: () => ({ sessionId: '', currentModel: '' }),
+  createFileState: () => ({ sessionId: '', currentModel: '', cwd: '' }),
   reduceLine(state, obj, meta, emit) {
     if (obj.type === 'session_meta' && obj.payload && obj.payload.id) {
       state.sessionId = obj.payload.id;
+      state.cwd = typeof obj.payload.cwd === 'string' ? obj.payload.cwd : '';
       return;
     }
     if (obj.type === 'turn_context' && obj.payload && obj.payload.model) {
@@ -47,7 +48,9 @@ const source = createJsonlSource({
       const usage = info.last_token_usage || {};
       const total = Number(usage.total_tokens) || 0;
       if (!total) return;
-      const prompt = Number(usage.input_tokens) || 0;
+      // OpenAI 口径：input_tokens 已含缓存读，拆出后 prompt 只保留纯输入
+      const cached = Number(usage.cached_input_tokens) || 0;
+      const prompt = Math.max(0, (Number(usage.input_tokens) || 0) - cached);
       const completion = (Number(usage.output_tokens) || 0) + (Number(usage.reasoning_output_tokens) || 0);
       const currentModel = state.currentModel;
       const sid = state.sessionId || path.basename(meta.file, '.jsonl').replace(/^rollout-/, '');
@@ -59,10 +62,13 @@ const source = createJsonlSource({
         source: 'codex',
         promptTokens: prompt,
         completionTokens: completion,
+        cacheReadTokens: cached,
+        cacheWriteTokens: 0,
         totalTokens: total,
+        project: state.cwd ? path.basename(state.cwd).slice(0, 128) : '',
         latencyMs: 0,
         status: 1,
-        remark: `session=${sid.slice(0, 24)} cached=${Number(usage.cached_input_tokens) || 0} reasoning=${Number(usage.reasoning_output_tokens) || 0}`.slice(0, 255),
+        remark: `session=${sid.slice(0, 24)} reasoning=${Number(usage.reasoning_output_tokens) || 0}`.slice(0, 255),
         createdAt: Date.parse(obj.timestamp) || 0
       });
     }

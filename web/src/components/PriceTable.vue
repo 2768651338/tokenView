@@ -6,6 +6,7 @@
         {{ noteText }}
       </span>
       <button class="pt-add" :disabled="syncing" @click="syncOnline">{{ syncing ? '同步中...' : '⟳ 同步在线价格' }}</button>
+      <button class="pt-add" @click="exportPrices">导出 CSV</button>
       <button class="pt-add" @click="startAdd">＋ 新增模型</button>
     </div>
     <div v-if="syncError" class="pt-error" style="margin:-6px 0 8px;text-align:left;">同步失败：{{ syncError }}</div>
@@ -87,6 +88,7 @@
 import { computed, ref } from 'vue';
 import { fmtTokens, fmtCost, fmtNum } from '../utils/format';
 import { saveModelPrice, resetModelPrice, syncModelRadarPrices } from '../api';
+import { downloadCsv } from '../utils/download';
 
 const props = defineProps({
   data: { type: Object, default: () => ({ list: [], note: '', currency: '', online: null }) }
@@ -95,6 +97,21 @@ const emit = defineEmits(['refresh']);
 
 const list = computed(() => props.data.list || []);
 const meta = computed(() => props.data);
+
+/** 导出当前价目表（前端已加载的数据，无需请求后端） */
+function exportPrices() {
+  const columns = [
+    ['model', '模型'],
+    ['channel', '渠道'],
+    ['input_per_million', '输入单价(元/百万)'],
+    ['output_per_million', '输出单价(元/百万)'],
+    ['tokens', '累计Tokens'],
+    ['cost', '累计费用(元)'],
+    ['calls', '调用次数'],
+    ['source', '价格来源']
+  ];
+  downloadCsv('tokenview-prices.csv', columns, list.value);
+}
 
 // 面板说明：三层价目 + 在线同步时间
 const noteText = computed(() => {
