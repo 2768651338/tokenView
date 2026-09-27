@@ -8,12 +8,16 @@ const COLUMNS = [
   ['created_at', '时间'],
   ['channel', '渠道'],
   ['model', '模型'],
+  ['source', '来源'],
+  ['project', '项目'],
   ['prompt_tokens', '输入'],
   ['completion_tokens', '输出'],
   ['cache_tokens', '缓存'],
   ['total_tokens', '总量'],
   ['cost', '费用'],
   ['latency_ms', '延迟ms'],
+  ['ttft_ms', '首字延迟ms'],
+  ['error_type', '错误类型'],
   ['status', '状态']
 ];
 

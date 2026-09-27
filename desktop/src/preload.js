@@ -6,5 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('tokenview', {
   getCloseToTray: () => ipcRenderer.invoke('tokenview:get-close-to-tray'),
-  setCloseToTray: (v) => ipcRenderer.invoke('tokenview:set-close-to-tray', !!v)
+  setCloseToTray: (v) => ipcRenderer.invoke('tokenview:set-close-to-tray', !!v),
+  /** 选择文件夹（取消返回空串）；浏览器版无此能力 */
+  pickFolder: () => ipcRenderer.invoke('tokenview:pick-folder')
 });

@@ -47,6 +47,12 @@ const source = createJsonlSource({
       const info = obj.payload.info || {};
       const usage = info.last_token_usage || {};
       const total = Number(usage.total_tokens) || 0;
+      // 上下文水位：会话累计口径 total_token_usage / 模型上下文窗口（部分版本不携带）
+      const ctxWindow = Math.max(0, Number(info.model_context_window) || 0);
+      const cumulative = info.total_token_usage || {};
+      const ctxUsed = Math.max(0, Number(cumulative.total_tokens) || 0);
+      if (ctxWindow) rememberPlan(info); // 同事件中的 rate_limits 一并记录
+      else if (info.rate_limits) rememberPlan(info);
       if (!total) return;
       // OpenAI 口径：input_tokens 已含缓存读，拆出后 prompt 只保留纯输入
       const cached = Number(usage.cached_input_tokens) || 0;
@@ -68,12 +74,38 @@ const source = createJsonlSource({
         project: state.cwd ? path.basename(state.cwd).slice(0, 128) : '',
         latencyMs: 0,
         status: 1,
+        sessionId: String(sid).slice(0, 64),
+        sessionTitle: '',
+        isSubagent: 0,
+        ctxWindow,
+        ctxUsed,
+        errorType: '',
         remark: `session=${sid.slice(0, 24)} reasoning=${Number(usage.reasoning_output_tokens) || 0}`.slice(0, 255),
         createdAt: Date.parse(obj.timestamp) || 0
       });
     }
   }
 });
+
+/* ---------- 订阅限额（部分 Codex 版本在 token_count 中携带 rate_limits/plan） ---------- */
+
+const planState = { info: null };
+
+function rememberPlan(info) {
+  const rl = info.rate_limits;
+  if (!rl || typeof rl !== 'object') return;
+  const snapshot = {};
+  for (const [k, v] of Object.entries(rl)) {
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') snapshot[k] = v;
+  }
+  if (!Object.keys(snapshot).length) return;
+  planState.info = { ...snapshot, seen_at: Date.now() };
+}
+
+/** 最近一次观测到的订阅限额信息；无数据返回 null */
+function getPlanInfo() {
+  return planState.info;
+}
 
 const cache = { lastScan: 0, dir: null };
 

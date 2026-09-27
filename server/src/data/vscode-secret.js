@@ -12,6 +12,10 @@ const { DatabaseSync } = require('node:sqlite');
 
 /** 用 PowerShell 调 DPAPI 解密（Windows ProtectedData） */
 function dpapiUnprotect(encryptedBase64) {
+  // base64 字符集不含引号/反引号/$ 等元字符；断言防御未来上游格式变化被拼进命令行
+  if (!/^[A-Za-z0-9+/=]+$/.test(encryptedBase64)) {
+    throw new Error('DPAPI payload 含非法 base64 字符，拒绝拼入 PowerShell');
+  }
   const script =
     `Add-Type -AssemblyName System.Security;` +
     `$b=[Convert]::FromBase64String('${encryptedBase64}');` +

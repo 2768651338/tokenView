@@ -1,9 +1,11 @@
 /**
  * 数据源：LobsterAI（Claude Code 封装）
- * 扫描 AppData\Roaming\LobsterAI\openclaw\state\agents\main\sessions\*.jsonl，
- * Claude Code 标准格式，assistant 消息携带 message.usage。只读访问。
- *
- * 增量扫描：仅解析文件追加字节；文件截断/删除时自动全量重建。
+ * 扫描 AppData\Roaming\LobsterAI\openclaw\state\agents\main\sessions\*.jsonl。
+ * 兼容两种格式：
+ *   1. 旧版会话 jsonl：assistant 消息携带 message.usage；
+ *   2. 新版 *.trajectory.jsonl（openclaw-trajectory）：type=model.completed 行的
+ *      data.usage 为累计用量，trace.artifacts 行是同一数据的落档快照，不重复解析。
+ * 只读访问；增量扫描：仅解析文件追加字节；文件截断/删除时自动全量重建。
  */
 const fs = require('fs');
 const path = require('path');
@@ -26,6 +28,40 @@ const source = createJsonlSource({
   collectFiles: (root) => collectJsonl(root),
   createFileState: () => ({ rowCount: 0 }),
   reduceLine(state, obj, meta, emit) {
+    // 新版轨迹格式：只认 model.completed（每 run 一次），避免与 trace.artifacts 重复计数
+    if (obj && obj.traceSchema === 'openclaw-trajectory') {
+      if (obj.type !== 'model.completed' || !obj.data || !obj.data.usage) return;
+      const u = obj.data.usage || {};
+      const d = obj.data;
+      const input = Number(u.input) || 0;
+      const output = Number(u.output) || 0;
+      const cacheRead = Number(u.cacheRead) || 0;
+      const reasoning = Number(u.reasoningTokens) || 0;
+      // usage.total 不含 reasoning（实测 input+output+cacheRead === total），统一按四项之和
+      const total = input + output + cacheRead + reasoning;
+      if (!total) return;
+      const failed = !!(d.aborted || d.timedOut || d.externalAbort || d.idleTimedOut || d.promptErrorSource);
+      emit({
+        requestId: 'lobsterai:traj:' + (obj.traceId || path.basename(meta.file, '.jsonl')) + ':' + (obj.seq != null ? obj.seq : obj.sourceSeq != null ? obj.sourceSeq : meta.lineNo),
+        channel: 'LobsterAI',
+        channelKind: 'lobsterai',
+        model: obj.modelId || 'unknown',
+        source: 'lobsterai',
+        promptTokens: input,
+        completionTokens: output + reasoning,
+        cacheReadTokens: cacheRead,
+        cacheWriteTokens: 0,
+        totalTokens: total,
+        project: '',
+        latencyMs: 0,
+        status: failed ? 0 : 1,
+        errorType: d.promptErrorSource ? String(d.promptErrorSource).slice(0, 64) : (failed ? 'aborted' : ''),
+        remark: `run=${String(obj.runId || '').slice(0, 36)} compaction=${Number(d.compactionCount) || 0}`.slice(0, 255),
+        createdAt: Date.parse(obj.ts) || 0
+      });
+      return;
+    }
+    // 旧版会话格式
     const msg = obj.message || {};
     if (msg.role !== 'assistant' || !msg.usage) return;
     const u = msg.usage || {};

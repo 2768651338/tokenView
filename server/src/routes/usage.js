@@ -35,7 +35,9 @@ function assertReportAuth(req, res) {
  *   latency_ms: 850,                  // 可选，延迟
  *   status: 1,                        // 可选，1成功 0失败，默认 1
  *   request_id: "req_xxx",            // 可选，未传则自动生成
- *   tool: "Trae"                      // 可选，工具标识（工具维度统计用）
+ *   tool: "Trae",                     // 可选，工具标识（工具维度统计用）
+ *   project: "my-app",                // 可选，项目名（项目维度统计用）
+ *   remark: "备注"                    // 可选，备注（≤255 字符）
  * }
  */
 router.post('/report', (req, res) => {
@@ -51,7 +53,9 @@ router.post('/report', (req, res) => {
       latency_ms = 0,
       status = 1,
       request_id = '',
-      tool = ''
+      tool = '',
+      project = '',
+      remark = ''
     } = req.body || {};
 
     // 基础校验
@@ -77,7 +81,9 @@ router.post('/report', (req, res) => {
       latencyMs: Math.max(0, Number(latency_ms) || 0),
       status: status ? 1 : 0,
       requestId,
-      tool: String(tool).trim().slice(0, 32)
+      tool: String(tool).trim().slice(0, 32),
+      project: String(project).trim().slice(0, 128),
+      remark: String(remark).slice(0, 255)
     });
 
     if (!row) {
@@ -91,14 +97,14 @@ router.post('/report', (req, res) => {
 
     stats.invalidate(); // 新上报进入聚合缓存
 
+    // 费用与 stats 聚合同一计算口径（cc-switch 真实缓存价 > 价率估算）
     const p = priceTable.getPrices()[row.model] || {};
-    const inputPrice = Number(p.input) || 0;
-    const cost = Number(((
-      row.promptTokens * inputPrice
-      + row.completionTokens * (Number(p.output) || 0)
-      + row.cacheReadTokens * inputPrice * 0.1
-      + row.cacheWriteTokens * inputPrice * 1.25
-    ) / 1000).toFixed(4));
+    const cost = Number(stats.computeRowCost(
+      row,
+      Number(p.input) || 0,
+      Number(p.output) || 0,
+      stats.cachePricesFor(row.model)
+    ).toFixed(4));
     res.json({
       code: 0,
       message: '上报成功',

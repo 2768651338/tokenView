@@ -65,6 +65,35 @@
             <div class="sm-note">保存后按新汇率本地重算在线价目；自定义单价不受影响。</div>
           </section>
 
+          <!-- ZCode 数据位置 -->
+          <section class="sm-sec">
+            <div class="sm-sec-title">ZCode 数据位置</div>
+            <div class="sm-row sm-inline" style="align-items:flex-start;">
+              <span class="sm-label" style="margin-bottom:0;flex-shrink:0;">当前数据库：</span>
+              <span class="sm-label" style="color:var(--text-main);word-break:break-all;flex:1;min-width:0;">{{ zcode.db_path || '—' }}</span>
+              <span class="tag" :class="zcode.db_exists ? 'tag-ok' : 'tag-fail'" style="flex-shrink:0;">{{ zcode.db_exists ? '正常' : '未找到' }}</span>
+            </div>
+            <div class="sm-row sm-inline">
+              <input
+                v-model="zcodeDirInput"
+                type="text"
+                class="sm-input"
+                style="flex:1;min-width:240px;"
+                placeholder=".zcode 根目录（其下应含 cli/db/db.sqlite）"
+                :disabled="zcode.env_locked"
+              />
+              <button v-if="pickAvailable" class="sm-btn" :disabled="zcode.env_locked" @click="pickZcodeFolder">浏览...</button>
+              <button class="sm-btn" :disabled="savingZcode || zcode.env_locked" @click="saveZcodeDirSettings">{{ savingZcode ? '保存中...' : '保存位置' }}</button>
+              <button class="sm-btn sm-btn-ghost" :disabled="savingZcode || zcode.env_locked || !zcode.dir_setting" @click="resetZcodeDir">恢复默认</button>
+            </div>
+            <div v-if="zcodeMessage" class="sm-note">{{ zcodeMessage }}</div>
+            <div v-if="zcodeError" class="sm-error">{{ zcodeError }}</div>
+            <div v-if="zcode.env_locked" class="sm-error">已通过环境变量 ZCODE_DB_PATH / ZCODE_CONFIG_PATH 指定路径，界面设置不生效；如需修改请先清除环境变量。</div>
+            <div class="sm-note">
+              ZCode 数据目录被移动或自定义存储位置导致读取为空时，可在此手动指定 .zcode 根目录；浏览器版请直接粘贴完整路径。优先级：环境变量 &gt; 此设置 &gt; 默认 ~/.zcode。
+            </div>
+          </section>
+
           <!-- 数据源健康 -->
           <section class="sm-sec">
             <div class="sm-sec-title">数据源健康</div>
@@ -118,13 +147,13 @@
 
 <script setup>
 import { reactive, ref, watch } from 'vue';
-import { fetchBudget, saveBudget, fetchHealth, fetchSettings, saveFxRate } from '../api';
+import { fetchBudget, saveBudget, fetchHealth, fetchSettings, saveFxRate, saveZcodeDir } from '../api';
 import { fmtCost, fmtNum } from '../utils/format';
 
 const props = defineProps({
   visible: { type: Boolean, default: false }
 });
-const emit = defineEmits(['close', 'budget-changed']);
+const emit = defineEmits(['close', 'budget-changed', 'data-changed']);
 
 const form = reactive({ enabled: false, daily: 0, monthly: 0 });
 const status = reactive({ today_cost: 0, month_cost: 0, daily_ratio: 0, monthly_ratio: 0 });
@@ -136,6 +165,13 @@ const fxEffective = ref('6.8');
 const fxSourceText = ref('');
 const savingFx = ref(false);
 const fxMessage = ref('');
+
+const zcode = reactive({ db_path: '', db_exists: false, dir_setting: '', source: 'default', env_locked: false });
+const zcodeDirInput = ref('');
+const savingZcode = ref(false);
+const zcodeMessage = ref('');
+const zcodeError = ref('');
+const pickAvailable = !!(typeof window !== 'undefined' && window.tokenview && window.tokenview.pickFolder);
 
 const health = ref([]);
 
@@ -163,6 +199,8 @@ function barStyle(used, limit) {
 async function loadAll() {
   budgetError.value = '';
   fxMessage.value = '';
+  zcodeMessage.value = '';
+  zcodeError.value = '';
   try {
     const b = await fetchBudget();
     form.enabled = !!b.enabled;
@@ -178,6 +216,16 @@ async function loadAll() {
     fxEffective.value = s.fx_effective;
     fxSourceText.value = s.fx_rate ? '当前为手动覆盖' : '未覆盖（环境变量或默认值）';
     fxInput.value = s.fx_rate || '';
+    if (s.zcode) {
+      Object.assign(zcode, {
+        db_path: s.zcode.db_path || '',
+        db_exists: !!s.zcode.db_exists,
+        dir_setting: s.zcode.dir_setting || '',
+        source: s.zcode.source || 'default',
+        env_locked: !!s.zcode.env_locked
+      });
+      zcodeDirInput.value = s.zcode.dir_setting || '';
+    }
   } catch { /* 同上 */ }
   try {
     const h = await fetchHealth();
@@ -253,6 +301,66 @@ async function clearFx() {
 function setCloseToTray(v) {
   closeToTray.value = !!v;
   if (trayAvailable) window.tokenview.setCloseToTray(!!v);
+}
+
+/* ---- ZCode 数据位置 ---- */
+
+/** 用接口返回的最新状态刷新本地展示 */
+function applyZcodeStatus(s) {
+  if (!s) return;
+  Object.assign(zcode, {
+    db_path: s.db_path || '',
+    db_exists: !!s.db_exists,
+    dir_setting: s.dir_setting || '',
+    source: s.source || 'default',
+    env_locked: !!s.env_locked
+  });
+}
+
+async function saveZcodeDirSettings() {
+  zcodeMessage.value = '';
+  zcodeError.value = '';
+  const dir = zcodeDirInput.value.trim();
+  if (!dir) {
+    zcodeError.value = '请填写 .zcode 根目录，或点击"恢复默认"清除自定义位置';
+    return;
+  }
+  savingZcode.value = true;
+  try {
+    const r = await saveZcodeDir(dir);
+    applyZcodeStatus(r);
+    zcodeMessage.value = '已保存，ZCode 数据源已切换到新位置';
+    emit('data-changed');
+  } catch (e) {
+    zcodeError.value = e.message || '保存失败';
+  } finally {
+    savingZcode.value = false;
+  }
+}
+
+async function resetZcodeDir() {
+  zcodeMessage.value = '';
+  zcodeError.value = '';
+  savingZcode.value = true;
+  try {
+    const r = await saveZcodeDir('');
+    applyZcodeStatus(r);
+    zcodeDirInput.value = '';
+    zcodeMessage.value = '已恢复默认位置（~/.zcode）';
+    emit('data-changed');
+  } catch (e) {
+    zcodeError.value = e.message || '操作失败';
+  } finally {
+    savingZcode.value = false;
+  }
+}
+
+/** 桌面端原生目录选择（浏览器版不展示该按钮） */
+async function pickZcodeFolder() {
+  try {
+    const p = await window.tokenview.pickFolder();
+    if (p) zcodeDirInput.value = p;
+  } catch { /* 用户取消或 IPC 不可用 */ }
 }
 
 function close() {

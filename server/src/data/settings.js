@@ -64,4 +64,22 @@ function setFxRate(rate) {
   return { fx_rate: getFxRate() };
 }
 
-module.exports = { getFxRate, setFxRate };
+/* ---------- ZCode 数据位置覆盖 ---------- */
+
+/** 用户手动指定的 .zcode 根目录；未设置返回 ''（走默认 ~/.zcode 或环境变量） */
+function getZcodeDir() {
+  const v = String(load().zcode_dir || '').trim();
+  return v.slice(0, 512);
+}
+
+/** 设置 / 清除 ZCode 数据目录；dir 为空串/null 表示清除。返回 { zcode_dir } */
+function setZcodeDir(dir) {
+  const obj = load();
+  const v = String(dir || '').trim().slice(0, 512);
+  if (v) obj.zcode_dir = v;
+  else delete obj.zcode_dir;
+  save(obj);
+  return { zcode_dir: getZcodeDir() };
+}
+
+module.exports = { getFxRate, setFxRate, getZcodeDir, setZcodeDir };

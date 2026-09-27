@@ -158,8 +158,58 @@ function ensureSynced() {
   }
   loadProviders();
   loadRollups();
+  loadModelPricing();
   return true;
 }
+
+/* ---------- 真实缓存价目（model_pricing 表，USD / 百万 tokens） ---------- */
+
+const pricingState = { count: -1, map: {} };
+
+/** 读 model_pricing 表并换算为 元/1K；count 门控缓存，表缺失时保持空 */
+function loadModelPricing() {
+  try {
+    const fx = require('./modelradar').fxUsdCny();
+    const n = conn.db.prepare('SELECT COUNT(*) AS c FROM model_pricing').get().c;
+    if (n === pricingState.count) return;
+    pricingState.count = n;
+    pricingState.map = {};
+    for (const r of conn.db.prepare(`
+      SELECT model_id, input_cost_per_million, output_cost_per_million,
+             cache_read_cost_per_million, cache_creation_cost_per_million
+      FROM model_pricing
+    `).all()) {
+      const name = String(r.model_id || '').trim();
+      if (!name) continue;
+      const num = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 ? n : -1;
+      };
+      const input = num(r.input_cost_per_million);
+      const output = num(r.output_cost_per_million);
+      const cacheRead = num(r.cache_read_cost_per_million);
+      const cacheWrite = num(r.cache_creation_cost_per_million);
+      if (input < 0 && output < 0 && cacheRead < 0 && cacheWrite < 0) continue;
+      // USD / 百万 -> 元 / 1K（与 modelradar 在线价同口径）
+      pricingState.map[name] = {
+        input: input >= 0 ? input * fx / 1000 : null,
+        output: output >= 0 ? output * fx / 1000 : null,
+        cacheRead: cacheRead >= 0 ? cacheRead * fx / 1000 : null,
+        cacheWrite: cacheWrite >= 0 ? cacheWrite * fx / 1000 : null
+      };
+    }
+  } catch {
+    pricingState.count = -2; // 表缺失（旧版 cc-switch）
+    pricingState.map = {};
+  }
+}
+
+/** 各模型真实价目（元 / 1K，含缓存读写单价；null 表示该档未提供）；无数据返回 {} */
+function getCachePrices() {
+  return pricingState.map;
+}
+
+module.exports = { getRows, getCachePrices, source: 'cc-switch' };
 
 /** 提取时间范围内全部记录（用于聚合与分页） */
 function getRows(startMs = 0, endMs = Infinity) {
@@ -180,4 +230,3 @@ function getRows(startMs = 0, endMs = Infinity) {
   return state.rows.filter((r) => r.createdAt >= startMs && r.createdAt <= end);
 }
 
-module.exports = { getRows, source: 'cc-switch' };

@@ -18,6 +18,7 @@
             <th>渠道</th>
             <th style="text-align:right;">输入单价</th>
             <th style="text-align:right;">输出单价</th>
+            <th style="text-align:right;">缓存价 读/写</th>
             <th style="text-align:right;">累计 Tokens</th>
             <th style="text-align:right;">累计费用</th>
             <th style="text-align:right;">调用次数</th>
@@ -30,6 +31,7 @@
             <td style="color:var(--text-faint);">—</td>
             <td style="text-align:right;"><input v-model="editing.input" class="pt-input" style="width:76px;text-align:right;" type="number" min="0" step="any" placeholder="¥/百万" /></td>
             <td style="text-align:right;"><input v-model="editing.output" class="pt-input" style="width:76px;text-align:right;" type="number" min="0" step="any" placeholder="¥/百万" /></td>
+            <td style="color:var(--text-faint);text-align:right;">—</td>
             <td style="color:var(--text-faint);text-align:right;">—</td>
             <td style="color:var(--text-faint);text-align:right;">—</td>
             <td style="color:var(--text-faint);text-align:right;">—</td>
@@ -48,6 +50,7 @@
               <td><span v-if="p.channel" class="chip">{{ p.channel }}</span><span v-else style="color:var(--text-faint);">—</span></td>
               <td style="text-align:right;"><input v-model="editing.input" class="pt-input" style="width:76px;text-align:right;" type="number" min="0" step="any" /></td>
               <td style="text-align:right;"><input v-model="editing.output" class="pt-input" style="width:76px;text-align:right;" type="number" min="0" step="any" /></td>
+              <td style="color:var(--text-faint);text-align:right;">—</td>
               <td style="text-align:right;">{{ fmtTokens(p.tokens) }}</td>
               <td style="text-align:right;">{{ fmtCost(p.cost) }}</td>
               <td style="text-align:right;">{{ fmtNum(p.calls) }}</td>
@@ -62,10 +65,19 @@
                 {{ p.model }}
                 <span v-if="p.custom" class="chip" style="margin-left:6px;font-size:10px;padding:0 6px;">自定义</span>
                 <span v-else-if="p.source === 'modelradar'" class="chip" style="margin-left:6px;font-size:10px;padding:0 6px;">在线</span>
+                <span v-else-if="p.source === 'cc-switch'" class="chip" style="margin-left:6px;font-size:10px;padding:0 6px;" title="价表未收录，按 CC Switch 真实价目（USD × 汇率）计费">CC真实价</span>
               </td>
               <td><span v-if="p.channel" class="chip">{{ p.channel }}</span><span v-else style="color:var(--text-faint);">—</span></td>
               <td style="text-align:right;color:var(--accent);">¥{{ p.input_per_million }}<span class="unit">/百万</span></td>
               <td style="text-align:right;color:var(--accent-2);">¥{{ p.output_per_million }}<span class="unit">/百万</span></td>
+              <td style="text-align:right;">
+                <span v-if="p.cache_read_per_million != null" title="CC Switch model_pricing 真实缓存价">
+                  <span style="color:var(--text-sub);">¥{{ p.cache_read_per_million }}</span>
+                  <span style="color:var(--text-faint);"> / </span>
+                  <span style="color:var(--text-sub);">¥{{ p.cache_write_per_million }}</span>
+                </span>
+                <span v-else style="color:var(--text-faint);font-size:11px;" title="未收录真实缓存价，按输入价 10% / 125% 估算">估算</span>
+              </td>
               <td style="text-align:right;">{{ fmtTokens(p.tokens) }}</td>
               <td style="text-align:right;color:var(--amber);font-weight:600;">{{ fmtCost(p.cost) }}</td>
               <td style="text-align:right;color:var(--text-sub);">{{ fmtNum(p.calls) }}</td>
@@ -76,7 +88,7 @@
             </tr>
           </template>
           <tr v-if="!list.length && !(editing && editing.isNew)">
-            <td colspan="8" style="text-align:center;color:var(--text-faint);padding:24px;">暂无数据</td>
+            <td colspan="9" style="text-align:center;color:var(--text-faint);padding:24px;">暂无数据</td>
           </tr>
         </tbody>
       </table>
@@ -105,6 +117,8 @@ function exportPrices() {
     ['channel', '渠道'],
     ['input_per_million', '输入单价(元/百万)'],
     ['output_per_million', '输出单价(元/百万)'],
+    ['cache_read_per_million', '缓存读价(元/百万)'],
+    ['cache_write_per_million', '缓存写价(元/百万)'],
     ['tokens', '累计Tokens'],
     ['cost', '累计费用(元)'],
     ['calls', '调用次数'],

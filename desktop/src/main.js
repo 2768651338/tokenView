@@ -175,6 +175,16 @@ if (!gotLock) {
     return closeToTrayEnabled;
   });
 
+  // 设置页的"选择文件夹"（ZCode 数据位置等）；取消或窗口已销毁时返回空串
+  ipcMain.handle('tokenview:pick-folder', async () => {
+    if (!mainWindow) return '';
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择文件夹',
+      properties: ['openDirectory']
+    });
+    return result.canceled || !result.filePaths.length ? '' : result.filePaths[0];
+  });
+
   app.on('before-quit', () => { quitting = true; });
 
   app.on('window-all-closed', () => {

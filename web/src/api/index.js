@@ -51,10 +51,20 @@ export const fetchBudget = () => http.get('/stats/budget');
 export const saveBudget = (daily, monthly, enabled) => http.post('/stats/budget', { daily, monthly, enabled });
 /** 数据源健康 */
 export const fetchHealth = () => http.get('/stats/health');
-/** 应用设置（汇率覆盖等） */
+/** 会话维度统计（ZCode / Claude Code / Codex） */
+export const fetchSessions = (days, limit = 20) => http.get('/stats/sessions', { params: { days, limit } });
+/** 会话详情（用量汇总 + ZCode 消息预览） */
+export const fetchSessionDetail = (sessionId, source) => http.get('/stats/session/detail', { params: { session_id: sessionId, source } });
+/** 错误与中断分析 */
+export const fetchErrors = (days) => http.get('/stats/errors', { params: { days } });
+/** 真实工具调用统计（ZCode tool_usage） */
+export const fetchToolUsage = (days, limit = 30) => http.get('/stats/tool-usage', { params: { days, limit } });
+/** 应用设置（汇率覆盖 / ZCode 数据位置等） */
 export const fetchSettings = () => http.get('/stats/settings');
 /** 保存汇率覆盖（null/空串表示清除覆盖） */
 export const saveFxRate = (rate) => http.post('/stats/settings/fx', { rate });
+/** 设置 ZCode 数据目录（'' 表示恢复默认 ~/.zcode） */
+export const saveZcodeDir = (dir) => http.post('/stats/settings/zcode-dir', { dir });
 /** 明细导出（blob 下载；独立于响应拦截器） */
 export const downloadUsageExport = (params) => axios.get('/api/stats/usage/export', {
   params,

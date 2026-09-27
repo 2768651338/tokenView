@@ -23,12 +23,16 @@
 | **自动刷新** | 间隔可选（关闭 / 10 秒 ~ 15 分钟），选择持久化保存 |
 | **上报 API** | 业务方实时上报 token 消耗，立即生效，`tool` 字段归入工具维度；可选 `TOKENVIEW_REPORT_TOKEN` 鉴权 |
 | **时段热力图** | 星期 × 小时的消耗分布（Tokens / 调用切换），看清自己的编码节奏 |
-| **延迟分析** | 整体与分渠道 P50 / P95 / 均值延迟 |
-| **项目消耗** | 按项目目录（Claude Code / Codex 会话来源）统计 Tokens / 费用 / 调用与占比 |
+| **延迟分析** | 整体与分渠道 P50 / P95 / 均值延迟 + 首字延迟（TTFT，ZCode） |
+| **会话统计** | 按 source + sessionId 聚合（ZCode / Claude Code / Codex）：标题、项目、失败、子代理调用量、代码增删行数（ZCode）、上下文水位（Codex）；点击行查看会话详情（用量汇总 + 最近消息预览，ZCode） |
+| **错误与中断** | 失败率 / 失败调用 / 错误事件 / 用户中断 / 重试 / 上下文超限 KPI + 错误类型分布（rate_limited / server_error 等）+ 渠道失败排行 |
+| **工具调用分析** | ZCode tool_usage 真实记录：各工具调用量、失败率、平均耗时、只读 / 破坏性标记、运行中数量 |
+| **项目消耗** | 按项目目录（ZCode 会话目录 / Claude Code 与 Codex 的 cwd）统计 Tokens / 费用 / 调用、占比与代码增删行数（ZCode） |
 | **月度账单** | 按月生成渠道 / 模型 / 工具分列汇总，一键导出 CSV |
 | **预算告警** | 日 / 月预算，达 80% 提醒、100% 告警；顶栏横幅提示 + 桌面系统通知（每天每级最多一次） |
-| **数据导出** | 调用明细按当前筛选导出 CSV / JSON（封顶 10 万行），价目表一键导出 CSV |
+| **数据导出** | 调用明细按当前筛选导出 CSV / JSON（封顶 10 万行，含来源 / 项目 / TTFT / 错误类型列），价目表一键导出 CSV（含缓存价） |
 | **数据源健康** | 设置页查看各数据源行数、最近使用、解密状态 |
+| **ZCode 数据位置** | ZCode 数据目录被移动或自定义导致读取为空时，可在设置页手动指定 `.zcode` 根目录（桌面版可浏览选择，浏览器版粘贴路径）；库缺失时该源自动降级为空并提示，不再影响其他数据源 |
 | **系统托盘** | 桌面版托盘图标（显示窗口 / 退出），可选「关闭时最小化到托盘」 |
 
 ---
@@ -124,15 +128,20 @@ curl -X POST http://localhost:3000/api/usage/report \
 ```
 费用 = (输入tokens × 输入单价
       + 输出tokens × 输出单价
-      + 缓存读tokens × 输入单价 × 10%
-      + 缓存写tokens × 输入单价 × 125%) / 1000
+      + 缓存读tokens × 缓存读单价
+      + 缓存写tokens × 缓存写单价) / 1000
+
+缓存读/写单价：优先取 CC Switch model_pricing 表该模型的真实价（USD × 汇率换算），
+未收录时按行业惯例价率估算（读 = 输入价 × 10%，写 = 输入价 × 125%）
 ```
 
-- 未配置单价的模型费用为 0；缓存读 / 缓存写按行业惯例的缓存价率计价（Anthropic / OpenAI 官方口径：读约 10%、写约 125%），可用环境变量 `TOKENVIEW_CACHE_READ_RATE` / `TOKENVIEW_CACHE_WRITE_RATE` 覆盖
-- 各数据源的 `input_tokens` 语义不同（ZCode / Codex / CC Switch 已含缓存读，Claude Code 为纯输入），适配层已统一拆分为纯输入 + 缓存读 + 缓存写，避免重复计费
+- 价目共四层：**自定义 > 在线同步（modelradar）> 官方默认 > CC Switch 真实价兜底**（价表三层都未收录、但 CC Switch 记录过该模型价时，按真实价计费，面板标记「CC真实价」）
+- 缓存价率可用环境变量 `TOKENVIEW_CACHE_READ_RATE` / `TOKENVIEW_CACHE_WRITE_RATE` 覆盖（仅影响未收录真实价的模型）；模型名匹配支持大小写不敏感兜底（如 `GLM-5.2` / `glm-5.2`）
+- 未配置单价的模型费用为 0；各数据源的 `input_tokens` 语义不同（ZCode / Codex / CC Switch 已含缓存读，Claude Code 为纯输入），适配层已统一拆分为纯输入 + 缓存读 + 缓存写，避免重复计费
 - 仪表盘「**模型市场价参考**」面板展示全部模型单价与累计费用，**支持自定义**：点「＋ 新增模型」添加价表中没有的模型，或对已有模型点「编辑」覆盖默认单价（行内带「自定义」标记，可一键「恢复默认」）；自定义价持久化于 `<数据目录>/custom-prices.json`，立即生效且重启保留
-- **在线价目同步**：点「⟳ 同步在线价格」从 [modelradar.cn](https://modelradar.cn/api) 拉取全量模型官方价（美元/百万，按汇率 6.8 换算为元，可用环境变量 `MODELRADAR_FX_USD_CNY` 调整），覆盖约 300 个模型，存于 `<数据目录>/modelradar-prices.json`；价目优先级为 **自定义 > 在线同步 > 官方默认**，面板中在线价带「在线」标记
+- **在线价目同步**：点「⟳ 同步在线价格」从 [modelradar.cn](https://modelradar.cn/api) 拉取全量模型官方价（美元/百万，按汇率 6.8 换算为元，可用环境变量 `MODELRADAR_FX_USD_CNY` 调整），覆盖约 300 个模型，存于 `<数据目录>/modelradar-prices.json`；面板中在线价带「在线」标记，「缓存价 读/写」列展示真实缓存价（未收录显示「估算」）
 - 中转渠道实际费率不同时，除面板编辑外也可直接修改 `prices.json`（默认价表，保存立即生效）
+- 上报接口响应中的费用与统计面板**同一计算口径**（`stats.computeRowCost` 单一实现）
 
 ---
 
@@ -156,8 +165,10 @@ curl -X POST http://localhost:3000/api/usage/report \
 | prompt_tokens | number | ✅ | 输入 tokens；负数按 0 处理 |
 | completion_tokens | number | ✅ | 输出 tokens；**两者之和必须 > 0，否则 400** |
 | tool | string | 否 | 工具标识（如 `Trae`、`kimi`、`扣子`），归入工具统计维度；超 32 字符截断 |
-| cache_read_tokens | number | 否 | 缓存读 tokens，默认 0；按缓存读价率计费 |
-| cache_write_tokens | number | 否 | 缓存写 tokens，默认 0；按缓存写价率计费 |
+| project | string | 否 | 项目名，归入项目统计维度；超 128 字符截断 |
+| remark | string | 否 | 备注（如错误信息），超 255 字符截断 |
+| cache_read_tokens | number | 否 | 缓存读 tokens，默认 0；按缓存读价计费（优先 CC Switch 真实价） |
+| cache_write_tokens | number | 否 | 缓存写 tokens，默认 0；按缓存写价计费（优先 CC Switch 真实价） |
 | latency_ms | number | 否 | 调用延迟毫秒，默认 0，负数按 0 处理 |
 | status | number | 否 | 1 成功 / 0 失败，默认 1；**非 0 值均按成功计** |
 | request_id | string | 否 | 调用方幂等 ID，未传自动生成；**相同 ID 重复上报按成功幂等忽略**（网络重试安全），响应中 `data.duplicate: true` |
@@ -214,7 +225,12 @@ curl -X POST http://127.0.0.1:3000/api/usage/report \
 | GET | `/api/stats/usage?page=1&pageSize=20&channel=&source=&status=&start=&end=` | 调用明细分页 |
 | GET | `/api/channels` | 渠道列表 |
 | GET | `/api/stats/heatmap?days=30` | 时段热力图（星期 × 小时，tokens / calls） |
-| GET | `/api/stats/latency?days=30` | 延迟分析（整体与分渠道 P50 / P95 / 均值） |
+| GET | `/api/stats/latency?days=30` | 延迟分析（整体与分渠道 P50 / P95 / 均值，含 TTFT 首字延迟） |
+| GET | `/api/stats/sessions?days=30&limit=20` | 会话维度统计（ZCode / Claude Code / Codex；含子代理、增删行数、上下文水位） |
+| GET | `/api/stats/session/detail?session_id=&source=zcode` | 会话详情（用量汇总 + 最近消息预览，消息仅 ZCode） |
+| GET | `/api/stats/errors?days=30` | 错误与中断分析（失败率 / 错误类型分布 / 中断 / 重试 / 上下文超限） |
+| GET | `/api/stats/tool-usage?days=30&limit=30` | 工具调用分析（ZCode tool_usage 真实记录聚合） |
+| POST | `/api/stats/settings/zcode-dir` | 设置 ZCode 数据目录 `{dir: "D:/x/.zcode"}`（空串恢复默认；要求目录下存在 `cli/db/db.sqlite`） |
 | GET | `/api/stats/projects?days=30&limit=15` | 项目维度统计 |
 | GET | `/api/stats/bill/months` | 有数据的月份列表 |
 | GET | `/api/stats/bill?month=2026-09` | 月度账单（渠道 / 模型 / 工具分列） |

@@ -51,7 +51,7 @@ const CC_SWITCH_NOTE = 'CC Switch 的数据与 Claude Code / Codex 同源，合�
 
 function statusClass(s) {
   if (s === '有数据') return 'tag-ok';
-  if (s === '解密失败') return 'tag-fail';
+  if (s === '解密失败' || s === '异常') return 'tag-fail';
   return 'tag-pending';
 }
 </script>

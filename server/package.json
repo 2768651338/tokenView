@@ -1,6 +1,6 @@
 {
   "name": "tokenview-server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "TokenView 后端服务 - 直读本地工具用量，零数据库依赖",
   "type": "commonjs",
   "main": "src/index.js",

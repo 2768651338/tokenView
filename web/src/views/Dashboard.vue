@@ -72,6 +72,17 @@
       <LatencyStats :data="latency" :days="days" />
     </div>
 
+    <!-- 会话统计（宽表：会话/项目/子代理/上下文/增删 + 详情） -->
+    <div style="padding: 0 28px 20px;">
+      <SessionStats :list="sessions.list" :total="sessions.total" :days="days" />
+    </div>
+
+    <!-- 错误与中断 + 工具调用分析 -->
+    <div class="lower-grid">
+      <ErrorStats :data="errors" :days="days" />
+      <ToolUsage :list="toolUsage.list" :days="days" />
+    </div>
+
     <!-- 项目消耗 + 月度账单 -->
     <div class="lower-grid">
       <ProjectStats :list="projects" />
@@ -104,7 +115,7 @@
     </footer>
 
     <!-- 设置弹窗 -->
-    <SettingsModal :visible="showSettings" @close="showSettings = false" @budget-changed="loadBudget" />
+    <SettingsModal :visible="showSettings" @close="showSettings = false" @budget-changed="loadBudget" @data-changed="refreshAll" />
   </div>
 </template>
 
@@ -122,11 +133,15 @@ import Heatmap from '../components/Heatmap.vue';
 import LatencyStats from '../components/LatencyStats.vue';
 import ProjectStats from '../components/ProjectStats.vue';
 import BillPanel from '../components/BillPanel.vue';
+import SessionStats from '../components/SessionStats.vue';
+import ErrorStats from '../components/ErrorStats.vue';
+import ToolUsage from '../components/ToolUsage.vue';
 import SettingsModal from '../components/SettingsModal.vue';
 import {
   fetchOverview, fetchTrend, fetchChannels, fetchModels,
   fetchUsage, fetchChannelList, fetchPrices, fetchTools,
-  fetchHeatmap, fetchLatency, fetchProjects, fetchBudget
+  fetchHeatmap, fetchLatency, fetchProjects, fetchBudget,
+  fetchSessions, fetchErrors, fetchToolUsage
 } from '../api';
 import { fmtCost } from '../utils/format';
 
@@ -145,9 +160,12 @@ const prices = ref({ list: [] });
 const tools = ref([]);
 const channelList = ref([]);
 const heatmap = ref({ list: [], max_tokens: 0, max_calls: 0 });
-const latency = ref({ overall: null, channels: [] });
+const latency = ref({ overall: null, channels: [], ttft: { overall: null, channels: [] } });
 const projects = ref([]);
 const budget = ref(null);
+const sessions = ref({ list: [], total: 0 });
+const errors = ref({});
+const toolUsage = ref({ list: [] });
 
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
 const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
@@ -250,6 +268,15 @@ async function loadLatency() {
 async function loadProjects() {
   projects.value = await fetchProjects(days.value, 15);
 }
+async function loadSessions() {
+  sessions.value = await fetchSessions(days.value, 20);
+}
+async function loadErrors() {
+  errors.value = await fetchErrors(days.value);
+}
+async function loadToolUsage() {
+  toolUsage.value = await fetchToolUsage(days.value, 30);
+}
 async function loadBudget() {
   budget.value = await fetchBudget();
   maybeNotifyBudget();
@@ -274,7 +301,7 @@ async function refreshAll() {
     await Promise.all([
       loadOverview(), loadTrend(), loadChannels(), loadModels(),
       loadPrices(), loadTools(), loadHeatmap(), loadLatency(),
-      loadProjects(), loadBudget()
+      loadProjects(), loadBudget(), loadSessions(), loadErrors(), loadToolUsage()
     ]);
   } catch (e) {
     console.error('数据加载失败:', e.message);

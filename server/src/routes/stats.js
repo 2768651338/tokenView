@@ -9,6 +9,7 @@ const modelradar = require('../data/modelradar');
 const settings = require('../data/settings');
 const budget = require('../data/budget');
 const usageExport = require('../data/usage-export');
+const zcode = require('../data/zcode');
 
 const router = express.Router();
 
@@ -140,6 +141,33 @@ router.get('/projects', wrap(async (req, res) => {
   res.json({ code: 0, data: await stats.getProjects(days, req.query.limit) });
 }));
 
+// ---------- 会话维度统计（ZCode / Claude Code / Codex） ----------
+router.get('/sessions', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  res.json({ code: 0, data: await stats.getSessions(days, limit) });
+}));
+
+// ---------- 会话详情（用量汇总 + ZCode 消息预览） ----------
+router.get('/session/detail', wrap(async (req, res) => {
+  const detail = await stats.getSessionDetail(req.query.session_id, req.query.source);
+  if (detail.error) return res.status(400).json({ code: 400, message: detail.error });
+  res.json({ code: 0, data: detail });
+}));
+
+// ---------- 错误与中断分析 ----------
+router.get('/errors', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  res.json({ code: 0, data: await stats.getErrors(days) });
+}));
+
+// ---------- 真实工具调用统计（ZCode tool_usage） ----------
+router.get('/tool-usage', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  const limit = Math.min(Number(req.query.limit) || 30, 200);
+  res.json({ code: 0, data: await stats.getToolUsage(days, limit) });
+}));
+
 // ---------- 月度账单 ----------
 router.get('/bill/months', wrap(async (req, res) => {
   res.json({ code: 0, data: await stats.getBillMonths() });
@@ -167,13 +195,26 @@ router.get('/health', wrap(async (req, res) => {
   res.json({ code: 0, data: await stats.getHealth() });
 }));
 
-// ---------- 应用设置（汇率覆盖等） ----------
+// ---------- 应用设置（汇率覆盖 / ZCode 数据位置等） ----------
+function zcodeStatus() {
+  const p = zcode.resolvePaths();
+  return {
+    dir_setting: settings.getZcodeDir(),
+    source: p.source, // env | settings | default
+    db_path: p.dbPath,
+    db_exists: fs.existsSync(p.dbPath),
+    // 环境变量优先级高于界面设置：置灰提示用
+    env_locked: p.source === 'env'
+  };
+}
+
 router.get('/settings', wrap(async (req, res) => {
   res.json({
     code: 0,
     data: {
       fx_rate: settings.getFxRate(),
-      fx_effective: modelradar.fxUsdCny()
+      fx_effective: modelradar.fxUsdCny(),
+      zcode: zcodeStatus()
     }
   });
 }));
@@ -192,6 +233,52 @@ router.post('/settings/fx', wrap(async (req, res) => {
   }
   stats.invalidate();
   res.json({ code: 0, message: '已保存', data: { ...saved, reconverted, reconvert_error: reconvertError } });
+}));
+
+/**
+ * 设置 / 清除 ZCode 数据目录（.zcode 根目录）。
+ * 防呆：仅接受"已存在目录且其下有 cli/db/db.sqlite"，或直接指向 db.sqlite 文件；
+ * 环境变量 ZCODE_DB_PATH / ZCODE_CONFIG_PATH 优先级更高，此时界面设置不生效（返回提示）。
+ */
+router.post('/settings/zcode-dir', wrap(async (req, res) => {
+  const { dir } = req.body || {};
+  const raw = String(dir == null ? '' : dir).trim();
+  if (!raw) {
+    settings.setZcodeDir('');
+    stats.invalidate();
+    return res.json({ code: 0, message: '已恢复默认位置', data: zcodeStatus() });
+  }
+  if (process.env.ZCODE_DB_PATH || process.env.ZCODE_CONFIG_PATH) {
+    return res.status(400).json({
+      code: 400,
+      message: '已通过环境变量 ZCODE_DB_PATH / ZCODE_CONFIG_PATH 指定路径，界面设置不生效；请先清除环境变量'
+    });
+  }
+  let root = path.resolve(raw);
+  let st = null;
+  try { st = fs.statSync(root); } catch { /* 路径不存在 */ }
+  if (st && st.isFile()) {
+    // 直接选了 db.sqlite 文件：仅接受 .../cli/db/*.sqlite 结构，向上推导根目录
+    const name = path.basename(root).toLowerCase();
+    const parent = path.dirname(root);
+    if ((name.endsWith('.sqlite') || name.endsWith('.db'))
+      && path.basename(parent) === 'db' && path.basename(path.dirname(parent)) === 'cli') {
+      root = path.dirname(path.dirname(parent));
+      st = null;
+      try { st = fs.statSync(root); } catch { /* 推导目录不存在 */ }
+    } else {
+      return res.status(400).json({ code: 400, message: '请选择 .zcode 根目录（其下应含 cli/db/db.sqlite），或直接选择 db.sqlite 文件' });
+    }
+  }
+  if (!st || !st.isDirectory()) {
+    return res.status(400).json({ code: 400, message: `路径不存在或不是目录：${root}` });
+  }
+  if (!fs.existsSync(path.join(root, 'cli', 'db', 'db.sqlite'))) {
+    return res.status(400).json({ code: 400, message: `该目录下未找到 cli/db/db.sqlite（应为 .zcode 根目录）：${root}` });
+  }
+  settings.setZcodeDir(root);
+  stats.invalidate();
+  res.json({ code: 0, message: '已保存，ZCode 数据源已切换到新位置', data: zcodeStatus() });
 }));
 
 // ---------- 明细导出（CSV，按当前筛选，封顶 10 万行） ----------

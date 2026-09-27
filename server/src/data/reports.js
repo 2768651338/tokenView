@@ -28,7 +28,7 @@ function load() {
 }
 
 /** 写入一条上报记录，重复 request_id 返回 null */
-function append({ channel, model, promptTokens, completionTokens, cacheReadTokens = 0, cacheWriteTokens = 0, latencyMs, status, requestId, tool = '', remark = '' }) {
+function append({ channel, model, promptTokens, completionTokens, cacheReadTokens = 0, cacheWriteTokens = 0, latencyMs, status, requestId, tool = '', project = '', remark = '' }) {
   load();
   if (state.ids.has(requestId)) return null;
   const row = {
@@ -38,6 +38,7 @@ function append({ channel, model, promptTokens, completionTokens, cacheReadToken
     model,
     source: 'api',
     tool, // 工具标识（Trae / kimi / ...），用于工具维度统计
+    project: String(project || '').slice(0, 128), // 项目名（项目维度统计用）
     promptTokens,
     completionTokens,
     cacheReadTokens,

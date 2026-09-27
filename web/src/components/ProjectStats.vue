@@ -14,6 +14,7 @@
             <th style="text-align:right;">Tokens</th>
             <th style="text-align:right;">占比</th>
             <th style="text-align:right;">调用</th>
+            <th v-if="hasDiff" style="text-align:right;">代码增删</th>
             <th style="text-align:right;">费用</th>
           </tr>
         </thead>
@@ -28,10 +29,17 @@
               </div>
             </td>
             <td style="text-align:right;color:var(--text-sub);">{{ fmtNum(p.calls) }}</td>
+            <td v-if="hasDiff" style="text-align:right;">
+              <template v-if="p.additions != null || p.deletions != null">
+                <span style="color:var(--green);">+{{ fmtNum(p.additions || 0) }}</span>
+                <span style="color:var(--red);margin-left:4px;">-{{ fmtNum(p.deletions || 0) }}</span>
+              </template>
+              <span v-else style="color:var(--text-faint);">—</span>
+            </td>
             <td style="text-align:right;color:var(--amber);">{{ fmtCost(p.cost) }}</td>
           </tr>
           <tr v-if="!list.length">
-            <td colspan="5" style="text-align:center;color:var(--text-faint);padding:24px;">暂无带项目信息的数据</td>
+            <td :colspan="hasDiff ? 6 : 5" style="text-align:center;color:var(--text-faint);padding:24px;">暂无带项目信息的数据</td>
           </tr>
         </tbody>
       </table>
@@ -40,11 +48,15 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import { fmtTokens, fmtCost, fmtNum } from '../utils/format';
 
-defineProps({
+const props = defineProps({
   list: { type: Array, default: () => [] }
 });
+
+// 仅当存在任一增删数据时才展示该列（ZCode 部分会话未落 summary 值）
+const hasDiff = computed(() => props.list.some((p) => p.additions != null || p.deletions != null));
 
 function ratioWidth(r) {
   const v = Math.max(0, Math.min(100, Number(r) || 0));
