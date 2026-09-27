@@ -8,7 +8,8 @@ const os = require('os');
 const { readSecret } = require('./vscode-secret');
 
 const DEFAULT_ROOT = path.join(os.homedir(), 'AppData', 'Roaming', 'Qoder');
-const SECRET_KEY = 'aicoding.auth.creditUsage';
+// VS Code secret storage 的条目名（公开固定值，非凭据）
+const STORAGE_ITEM_NAME = 'aicoding.auth.creditUsage';
 const REFRESH_INTERVAL_MS = 15000;
 
 const cache = { records: [], lastScan: 0, healthy: true, root: null, reason: '' };
@@ -54,7 +55,7 @@ function rebuild() {
   const localState = path.join(root, 'Local State');
   const records = [];
   try {
-    const plain = readSecret(vscdb, localState, SECRET_KEY);
+    const plain = readSecret(vscdb, localState, STORAGE_ITEM_NAME);
     if (!plain) {
       cache.healthy = false;
       cache.reason = '解密失败';
