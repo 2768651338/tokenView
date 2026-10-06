@@ -79,7 +79,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { fmtNum, fmtLatency } from '../utils/format';
 import { downloadUsageExport } from '../api';
 import { saveBlobResponse } from '../utils/download';
@@ -90,7 +90,10 @@ const props = defineProps({
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 20 },
   channelList: { type: Array, default: () => [] },
-  sourceOptions: { type: Array, default: () => [] }
+  sourceOptions: { type: Array, default: () => [] },
+  // 趋势图下钻等外部设置的日期区间，同步进本组件的筛选输入框（数据加载由父级负责）
+  syncStart: { type: String, default: '' },
+  syncEnd: { type: String, default: '' }
 });
 const emit = defineEmits(['page-change', 'filter-change', 'refresh']);
 
@@ -98,6 +101,11 @@ const filters = reactive({ channel: '', source: '', status: '', start: '', end: 
 const exporting = ref(false);
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)));
+
+watch(() => [props.syncStart, props.syncEnd], ([s, e]) => {
+  if (s != null && s !== filters.start) filters.start = s || '';
+  if (e != null && e !== filters.end) filters.end = e || '';
+});
 
 function onFilterChange() {
   emit('filter-change', { ...filters });

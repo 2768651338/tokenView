@@ -6,6 +6,63 @@
         {{ total }} 个会话 · ZCode / Claude Code / Codex · 近 {{ days === 'all' ? '全部' : days + ' 天' }}
       </span>
     </div>
+
+    <!-- 全文搜索：跨会话检索消息正文与会话标题 -->
+    <div class="ss-search">
+      <input
+        v-model="searchQuery"
+        type="text"
+        class="ss-search-input"
+        placeholder="搜索会话内容，如：登录 / tokenView / 报错关键词（Enter 搜索）"
+        @keydown.enter="doSearch"
+      />
+      <select v-model="searchDays" class="ss-search-days" title="搜索范围">
+        <option value="all">全部时间</option>
+        <option :value="7">近 7 天</option>
+        <option :value="30">近 30 天</option>
+        <option :value="90">近 90 天</option>
+      </select>
+      <button class="detail-btn ss-search-btn" :disabled="searching || !searchQuery.trim()" @click="doSearch">
+        {{ searching ? '搜索中...' : '搜索' }}
+      </button>
+      <button v-if="searchResult" class="detail-btn" @click="clearSearch">清除</button>
+    </div>
+    <div v-if="searchError" class="ss-search-error">{{ searchError }}</div>
+    <div v-if="searchResult" class="ss-search-meta">
+      命中 {{ searchResult.total_sessions }} 个会话{{ searchResult.truncated ? '（扫描量达上限，结果可能不全）' : '' }}，展示最近活跃的前 {{ searchResult.list.length }} 个
+    </div>
+    <div v-if="searchResult" class="table-wrap ss-result-wrap">
+      <table class="usage-table">
+        <thead>
+          <tr>
+            <th>最近命中</th>
+            <th>会话</th>
+            <th>项目</th>
+            <th>来源</th>
+            <th style="text-align:right;">命中次数</th>
+            <th>片段</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in searchResult.list" :key="s.source + s.session_id" class="session-row" @click="openDetail(s)">
+            <td style="color:var(--text-sub);white-space:nowrap;">{{ s.last_time }}</td>
+            <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;" :title="s.title">{{ s.title }}</td>
+            <td style="color:var(--text-sub);">{{ s.project || '—' }}</td>
+            <td><span class="chip">{{ s.source_name }}</span></td>
+            <td style="text-align:right;">{{ s.matches }}</td>
+            <td class="ss-snippet" :title="s.snippet" v-html="highlight(s.snippet, searchResult.query)"></td>
+            <td style="text-align:right;">
+              <button class="detail-btn" @click.stop="openDetail(s)">详情</button>
+            </td>
+          </tr>
+          <tr v-if="!searchResult.list.length">
+            <td colspan="7" style="text-align:center;color:var(--text-faint);padding:20px;">没有匹配的会话</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <div class="table-wrap" style="max-height:340px;">
       <table class="usage-table">
         <thead>
@@ -106,7 +163,7 @@
 
 <script setup>
 import { ref } from 'vue';
-import { fetchSessionDetail } from '../api';
+import { fetchSessionDetail, searchSessions } from '../api';
 import { fmtTokens, fmtCost, fmtNum } from '../utils/format';
 
 defineProps({
@@ -117,6 +174,58 @@ defineProps({
 
 const detail = ref(null);
 const detailLoading = ref(false);
+
+/* ---- 全文搜索 ---- */
+const searchQuery = ref('');
+const searchDays = ref('all');
+const searching = ref(false);
+const searchResult = ref(null);
+const searchError = ref('');
+
+async function doSearch() {
+  const q = searchQuery.value.trim();
+  if (!q || searching.value) return;
+  searching.value = true;
+  searchError.value = '';
+  try {
+    searchResult.value = await searchSessions(q, searchDays.value, 20);
+  } catch (e) {
+    searchError.value = e.message || '搜索失败';
+    searchResult.value = null;
+  } finally {
+    searching.value = false;
+  }
+}
+
+function clearSearch() {
+  searchResult.value = null;
+  searchError.value = '';
+  searchQuery.value = '';
+}
+
+/** 摘要关键词高亮：先整体 HTML 转义再按字面量拆分包 <mark>，避免注入 */
+function highlight(snippet, query) {
+  const esc = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const q = String(query || '').trim();
+  if (!q) return esc(snippet);
+  const lower = String(snippet).toLowerCase();
+  const ql = q.toLowerCase();
+  const parts = [];
+  let i = 0;
+  while (i <= lower.length) {
+    const idx = lower.indexOf(ql, i);
+    if (idx < 0) {
+      parts.push(esc(String(snippet).slice(i)));
+      break;
+    }
+    parts.push(esc(String(snippet).slice(i, idx)));
+    parts.push('<mark>' + esc(String(snippet).slice(idx, idx + q.length)) + '</mark>');
+    i = idx + q.length;
+  }
+  return parts.join('');
+}
 
 function ctxStyle(ratio) {
   const v = Math.max(0, Math.min(100, Number(ratio) || 0));
@@ -158,6 +267,56 @@ function fmtMsgTime(ms) {
 
 <style scoped>
 .session-row { cursor: pointer; }
+.ss-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.ss-search-input {
+  flex: 1;
+  min-width: 220px;
+  background: var(--bg-0);
+  border: 1px solid var(--card-border);
+  color: var(--text-main);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+.ss-search-input:focus { border-color: var(--accent); }
+.ss-search-input::placeholder { color: var(--text-faint); }
+.ss-search-days {
+  background: var(--bg-0);
+  border: 1px solid var(--card-border);
+  color: var(--text-main);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.ss-search-days option { background: var(--bg-0); }
+.ss-search-btn { flex-shrink: 0; }
+.ss-search-error { color: var(--red); font-size: 11.5px; margin-bottom: 8px; }
+.ss-search-meta { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; }
+.ss-result-wrap { max-height: 280px; margin-bottom: 14px; }
+.ss-snippet {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-sub);
+  font-size: 11.5px;
+}
+.ss-snippet :deep(mark) {
+  background: transparent;
+  color: var(--amber);
+  font-weight: 600;
+  padding: 0;
+}
 .sub-mark {
   margin-left: 6px;
   font-size: 10px;

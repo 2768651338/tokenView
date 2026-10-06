@@ -10,6 +10,10 @@ const settings = require('../data/settings');
 const budget = require('../data/budget');
 const usageExport = require('../data/usage-export');
 const zcode = require('../data/zcode');
+const searchMod = require('../data/search');
+const webhook = require('../data/webhook');
+const backup = require('../data/backup');
+const reports = require('../data/reports');
 
 const router = express.Router();
 
@@ -195,6 +199,88 @@ router.get('/health', wrap(async (req, res) => {
   res.json({ code: 0, data: await stats.getHealth() });
 }));
 
+// ---------- 跨会话全文搜索（ZCode / Claude Code / Codex，手动触发） ----------
+router.get('/search', wrap(async (req, res) => {
+  const daysRaw = req.query.days;
+  const days = daysRaw === 'all' || daysRaw === undefined || daysRaw === ''
+    ? 'all' : Math.min(Number(daysRaw) || 'all', 365);
+  const r = await searchMod.search({
+    query: req.query.q,
+    days,
+    limit: Number(req.query.limit) || 20
+  });
+  if (r.error) return res.status(400).json({ code: 400, message: r.error });
+  res.json({ code: 0, data: r });
+}));
+
+// ---------- 缓存命中率分析 ----------
+router.get('/cache', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  res.json({ code: 0, data: await stats.getCacheStats(days) });
+}));
+
+// ---------- What-if 成本模拟 ----------
+router.get('/whatif', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 30);
+  res.json({ code: 0, data: await stats.getWhatIf(days, req.query.model || '') });
+}));
+
+// ---------- 成本异常检测 ----------
+router.get('/anomalies', wrap(async (req, res) => {
+  const days = parseDays(req.query.days, 90);
+  res.json({ code: 0, data: await stats.getAnomalies(days) });
+}));
+
+// ---------- 日报 / 周报 / 月报 Markdown 摘要 ----------
+router.get('/digest', wrap(async (req, res) => {
+  res.json({ code: 0, data: await stats.getDigest(req.query.period) });
+}));
+
+// ---------- Webhook 告警推送 ----------
+router.post('/settings/webhook', wrap(async (req, res) => {
+  const { enabled, url, type } = req.body || {};
+  const saved = settings.setWebhook({ enabled, url, type });
+  res.json({ code: 0, message: '已保存', data: saved });
+}));
+
+// 测试推送（使用当前配置；未配置时返回 400 带指引）
+router.post('/webhook/test', wrap(async (req, res) => {
+  const cfg = webhook.effectiveWebhook();
+  if (!cfg.enabled || !cfg.url) {
+    return res.status(400).json({ code: 400, message: '请先启用 Webhook 并填写 URL' });
+  }
+  const r = await webhook.send('TokenView 测试推送', `这是一条测试消息。类型：${cfg.type}；时间：${new Date().toLocaleString('zh-CN')}`);
+  if (!r.ok) {
+    return res.status(502).json({ code: 502, message: `推送失败：${r.error || `HTTP ${r.status}`}${r.body ? `，响应：${r.body}` : ''}` });
+  }
+  res.json({ code: 0, message: '推送成功', data: { status: r.status } });
+}));
+
+// ---------- 订阅渠道（月度账单的等价价值视图） ----------
+router.post('/settings/subscription', wrap(async (req, res) => {
+  const list = (req.body && Array.isArray(req.body.list)) ? req.body.list : req.body;
+  const saved = settings.setSubscriptionChannels(Array.isArray(list) ? list : []);
+  res.json({ code: 0, message: '已保存', data: saved });
+}));
+
+// ---------- 上报数据保留策略（保存后立即按新策略裁剪一次） ----------
+router.post('/settings/retention', wrap(async (req, res) => {
+  const { enabled, max_age_days, max_lines } = req.body || {};
+  const saved = settings.setRetention({ enabled, max_age_days, max_lines });
+  let applied = null;
+  let applyError = '';
+  try {
+    applied = reports.applyRetention(saved, true);
+  } catch (e) {
+    applyError = e.message;
+  }
+  res.json({
+    code: 0,
+    message: '已保存',
+    data: { ...saved, applied, apply_error: applyError, store: reports.retentionStats() }
+  });
+}));
+
 // ---------- 应用设置（汇率覆盖 / ZCode 数据位置等） ----------
 function zcodeStatus() {
   const p = zcode.resolvePaths();
@@ -209,12 +295,22 @@ function zcodeStatus() {
 }
 
 router.get('/settings', wrap(async (req, res) => {
+  const store = reports.retentionStats();
   res.json({
     code: 0,
     data: {
       fx_rate: settings.getFxRate(),
       fx_effective: modelradar.fxUsdCny(),
-      zcode: zcodeStatus()
+      zcode: zcodeStatus(),
+      webhook: settings.getWebhook(),
+      subscription_channels: settings.getSubscriptionChannels(),
+      retention: settings.getRetention(),
+      report: {
+        // 上报接口信息（测试面板用；token 不回传，只告知是否启用鉴权）
+        auth_enabled: !!process.env.TOKENVIEW_REPORT_TOKEN,
+        records: store.records,
+        bytes: store.bytes
+      }
     }
   });
 }));
@@ -308,5 +404,37 @@ router.get('/usage/export', wrap(async (req, res) => {
     throw e;
   }
 }));
+
+// ---------- 数据备份 / 恢复 ----------
+// 导出 bundle（JSON 下载，含上报数据 / 自定义价 / 预算 / 设置 / 在线价快照）
+router.get('/backup/export', wrap(async (req, res) => {
+  const bundle = backup.exportBundle();
+  const tmpPath = path.join(os.tmpdir(), `tokenview-backup-${crypto.randomBytes(6).toString('hex')}.json`);
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(bundle, null, 2));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    await new Promise((resolve) => {
+      res.download(tmpPath, `tokenview-backup-${stamp}.json`, (err) => {
+        fs.unlink(tmpPath, () => { /* 忽略清理失败 */ });
+        if (err && !res.headersSent) res.status(500).json({ code: 500, message: '导出失败' });
+        resolve();
+      });
+    });
+  } catch (e) {
+    fs.unlink(tmpPath, () => { /* 忽略清理失败 */ });
+    throw e;
+  }
+}));
+
+// 导入 bundle：独立大体积 JSON 中间件（reports.jsonl 可能远超应用级 1MB 限制）
+router.post('/backup/import', express.json({ limit: '210mb' }), (req, res) => {
+  try {
+    const r = backup.importBundle(req.body);
+    res.json({ code: 0, message: `已导入 ${r.imported.length} 个文件`, data: r });
+  } catch (e) {
+    res.status(400).json({ code: 400, message: e.message });
+  }
+});
 
 module.exports = router;

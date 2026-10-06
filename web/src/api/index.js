@@ -65,6 +65,33 @@ export const fetchSettings = () => http.get('/stats/settings');
 export const saveFxRate = (rate) => http.post('/stats/settings/fx', { rate });
 /** 设置 ZCode 数据目录（'' 表示恢复默认 ~/.zcode） */
 export const saveZcodeDir = (dir) => http.post('/stats/settings/zcode-dir', { dir });
+/** 跨会话全文搜索（ZCode / Claude Code / Codex 消息正文与会话标题） */
+export const searchSessions = (q, days = 'all', limit = 20) => http.get('/stats/search', { params: { q, days, limit }, timeout: 60000 });
+/** 缓存命中率分析 */
+export const fetchCacheStats = (days) => http.get('/stats/cache', { params: { days } });
+/** What-if 成本模拟（model 为空只返回实际费用与模型列表） */
+export const fetchWhatIf = (days, model = '') => http.get('/stats/whatif', { params: { days, model } });
+/** 成本异常检测 */
+export const fetchAnomalies = (days) => http.get('/stats/anomalies', { params: { days } });
+/** 日报 / 周报 / 月报 Markdown 摘要（period = day | week | month） */
+export const fetchDigest = (period) => http.get('/stats/digest', { params: { period } });
+/** 保存 Webhook 配置 */
+export const saveWebhookSettings = (enabled, url, type) => http.post('/stats/settings/webhook', { enabled, url, type });
+/** 发送 Webhook 测试推送 */
+export const testWebhook = () => http.post('/stats/webhook/test');
+/** 保存订阅渠道列表（[{ name, monthly_fee }]，全量替换） */
+export const saveSubscriptionChannels = (list) => http.post('/stats/settings/subscription', { list });
+/** 保存上报数据保留策略（保存后立即按新策略裁剪一次） */
+export const saveRetentionSettings = (enabled, maxAgeDays, maxLines) => http.post('/stats/settings/retention', { enabled, max_age_days: maxAgeDays, max_lines: maxLines });
+/** 发送一次测试上报（走与业务方相同的 /api/usage/report 接口） */
+export const sendTestReport = (payload) => http.post('/usage/report', payload);
+/** 数据备份导出（blob 下载；独立于响应拦截器） */
+export const downloadBackup = () => axios.get('/api/stats/backup/export', { responseType: 'blob', timeout: 120000 });
+/** 数据备份导入（JSON bundle 字符串） */
+export const importBackup = (bundleText) => http.post('/stats/backup/import', bundleText, {
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 120000
+});
 /** 明细导出（blob 下载；独立于响应拦截器） */
 export const downloadUsageExport = (params) => axios.get('/api/stats/usage/export', {
   params,

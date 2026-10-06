@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { dataDir } = require('../runtime');
+const settings = require('./settings');
 
 const FILE = path.join(dataDir(), 'reports.jsonl');
 
@@ -54,13 +55,22 @@ function append({ channel, model, promptTokens, completionTokens, cacheReadToken
   fs.appendFileSync(FILE, JSON.stringify(row) + '\n', 'utf8');
   state.records.push(row);
   state.ids.add(requestId);
+  maybeApplyRetention();
   return row;
+}
+
+/** 追加后按保留策略节流裁剪（读取失败/异常均不影响上报主流程） */
+function maybeApplyRetention() {
+  try {
+    applyRetention(settings.getRetention());
+  } catch { /* 裁剪失败下次再试 */ }
 }
 
 /** 提取时间范围内全部上报记录 */
 function getRows(startMs = 0, endMs = Infinity) {
   load();
-  return state.records.filter((r) => r.createdAt >= startMs && r.createdAt <= endMs);
+  const end = endMs === Infinity ? Number.MAX_SAFE_INTEGER : endMs;
+  return state.records.filter((r) => r.createdAt >= startMs && r.createdAt <= end);
 }
 
 /** 生成本地上报 ID */
@@ -68,4 +78,54 @@ function newRequestId() {
   return `api-${crypto.randomUUID()}`;
 }
 
-module.exports = { append, getRows, newRequestId, source: 'api' };
+/* ---------- 保留策略（reports.jsonl 无限增长治理） ---------- */
+
+const RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+let lastRetentionAt = 0;
+
+/** 清空内存态，强制下次访问重读文件（备份导入后调用） */
+function reset() {
+  state.records = [];
+  state.ids.clear();
+  state.loaded = false;
+}
+
+/**
+ * 按保留策略裁剪 reports.jsonl：保留「时间未过期」且「按行数不超过上限」的最新记录。
+ * 两项阈值可任选，均为 0 表示该维度不限制；实际裁剪有 5 分钟节流，测试可传 force。
+ * @returns {{ kept: number, removed: number } | null} 未启用/未触发返回 null
+ */
+function applyRetention(cfg, force = false) {
+  load();
+  const now = Date.now();
+  if (!force) {
+    if (!cfg || !cfg.enabled) return null;
+    if (!cfg.max_age_days && !cfg.max_lines) return null;
+    if (now - lastRetentionAt < RETENTION_CHECK_INTERVAL_MS) return null;
+  }
+  lastRetentionAt = now;
+  const cutoff = cfg.max_age_days > 0 ? now - cfg.max_age_days * 86400000 : 0;
+  const maxLines = cfg.max_lines > 0 ? Math.floor(cfg.max_lines) : Infinity;
+  // 时间过滤后取最新 maxLines 条（记录按追加序，即时间序）
+  const byAge = cutoff ? state.records.filter((r) => r.createdAt >= cutoff) : state.records;
+  const kept = byAge.slice(-maxLines);
+  if (kept.length === state.records.length) return { kept: kept.length, removed: 0 };
+  const removed = state.records.length - kept.length;
+  state.records = kept;
+  state.ids = new Set(kept.map((r) => r.requestId));
+  const file = FILE;
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, kept.map((r) => JSON.stringify(r)).join('\n') + (kept.length ? '\n' : ''), 'utf8');
+  fs.renameSync(tmp, file);
+  return { kept: kept.length, removed };
+}
+
+/** 当前上报记录条数与文件大小（保留策略展示用） */
+function retentionStats() {
+  load();
+  let bytes = 0;
+  try { bytes = fs.statSync(FILE).size; } catch { /* 文件不存在 */ }
+  return { records: state.records.length, bytes };
+}
+
+module.exports = { append, getRows, newRequestId, applyRetention, retentionStats, reset, source: 'api' };

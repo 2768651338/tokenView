@@ -9,6 +9,7 @@ const runtime = require('./runtime');
 const statsRouter = require('./routes/stats');
 const usageRouter = require('./routes/usage');
 const stats = require('./data/stats');
+const webhook = require('./data/webhook');
 
 /**
  * @param {{ webDist?: string|null }} [options] 显式指定前端构建产物目录（桌面端传入）
@@ -34,6 +35,8 @@ function createApp(options = {}) {
 
   // 启动即预热聚合缓存，首次打开页面无需等待冷构建
   setImmediate(() => stats.warmup());
+  // 预算告警 Webhook 轮询（内部有单次启动保护；未配置时每轮空转开销可忽略）
+  webhook.startBudgetLoop(() => stats.getBudgetStatus());
 
   // 健康检查
   app.get('/api/health', (req, res) => {

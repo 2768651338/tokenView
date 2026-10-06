@@ -16,6 +16,7 @@ let tray = null;
 let closeToTrayEnabled = false; // 设置页开关（经 preload IPC 同步），默认关闭 = 关闭窗口即退出
 let quitting = false;           // before-quit 置位：区分"用户点关闭"与"真正退出"
 let trayNoticeShown = false;    // 首次最小化到托盘时提示一次
+let startHidden = false;        // 开机自启带 --hidden 启动：就绪后不弹窗，静默驻留托盘
 
 /** 解析端口：--port 参数 / TOKENVIEW_PORT 环境变量；缺省 0 = 系统分配随机空闲端口 */
 function resolvePort() {
@@ -26,6 +27,9 @@ function resolvePort() {
   if (Number.isInteger(env) && env > 0 && env < 65536) return env;
   return 0;
 }
+
+/** --hidden：随系统自启时静默启动（手动双击 exe 不带该参数，照常弹窗） */
+startHidden = process.argv.slice(1).includes('--hidden');
 
 /** 前端资源目录：打包后与本文件同级的 web/；开发态回退 web/dist */
 function resolveWebDist() {
@@ -82,6 +86,15 @@ function createTray() {
   }
 }
 
+/** 托盘提示通知（首次驻留 / 静默自启用） */
+function notifyTray(title, body) {
+  try {
+    if (Notification.isSupported()) {
+      new Notification({ title, body }).show();
+    }
+  } catch { /* 通知失败不影响 */ }
+}
+
 function createWindow(url) {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -107,7 +120,17 @@ function createWindow(url) {
       preload: path.join(__dirname, 'preload.js')
     }
   });
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // 就绪后显示；开机自启（--hidden）且托盘可用时保持静默驻留
+  mainWindow.once('ready-to-show', () => {
+    if (startHidden && tray) {
+      if (!trayNoticeShown) {
+        trayNoticeShown = true;
+        notifyTray('TokenView 已在后台运行', '已随系统启动并最小化到托盘，双击托盘图标可打开窗口。');
+      }
+    } else {
+      mainWindow.show();
+    }
+  });
   // 仅放行 http(s) 外链到系统浏览器；窗口内只承载本应用页面
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     try {
@@ -125,14 +148,7 @@ function createWindow(url) {
     mainWindow.hide();
     if (!trayNoticeShown) {
       trayNoticeShown = true;
-      try {
-        if (Notification.isSupported()) {
-          new Notification({
-            title: 'TokenView 仍在运行',
-            body: '已最小化到系统托盘，双击托盘图标可重新打开；退出请从托盘菜单选择。'
-          }).show();
-        }
-      } catch { /* 通知失败不影响 */ }
+      notifyTray('TokenView 仍在运行', '已最小化到系统托盘，双击托盘图标可重新打开；退出请从托盘菜单选择。');
     }
   });
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -173,6 +189,18 @@ if (!gotLock) {
   ipcMain.handle('tokenview:set-close-to-tray', (_e, v) => {
     closeToTrayEnabled = !!v;
     return closeToTrayEnabled;
+  });
+
+  // 设置页的"开机自启"开关：注册启动项并带 --hidden，自启时静默驻留托盘
+  ipcMain.handle('tokenview:get-auto-launch', () => app.getLoginItemSettings().openAtLogin);
+  ipcMain.handle('tokenview:set-auto-launch', (_e, v) => {
+    try {
+      app.setLoginItemSettings({ openAtLogin: !!v, args: ['--hidden'] });
+      return app.getLoginItemSettings().openAtLogin === !!v ? !!v : app.getLoginItemSettings().openAtLogin;
+    } catch (e) {
+      console.warn('[TokenView] 设置开机自启失败:', e.message);
+      return app.getLoginItemSettings().openAtLogin;
+    }
   });
 
   // 设置页的"选择文件夹"（ZCode 数据位置等）；取消或窗口已销毁时返回空串

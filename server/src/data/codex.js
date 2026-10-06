@@ -109,8 +109,13 @@ function getPlanInfo() {
 
 const cache = { lastScan: 0, dir: null };
 
+/** 数据根目录（全文检索等扩展功能复用同一解析规则） */
+function getRootDir() {
+  return process.env.CODEX_DIR ? path.resolve(process.env.CODEX_DIR) : DEFAULT_DIR;
+}
+
 function ensureFresh() {
-  const root = process.env.CODEX_DIR ? path.resolve(process.env.CODEX_DIR) : DEFAULT_DIR;
+  const root = getRootDir();
   const now = Date.now();
   if (now - cache.lastScan < REFRESH_INTERVAL_MS && cache.dir === root) return;
   source.refresh(root);
@@ -125,4 +130,4 @@ function getRows(startMs = 0, endMs = Infinity) {
   return source.getRecords().filter((r) => r.createdAt >= startMs && r.createdAt <= end);
 }
 
-module.exports = { getRows, source: 'codex' };
+module.exports = { getRows, getRootDir, collectRollouts, source: 'codex' };

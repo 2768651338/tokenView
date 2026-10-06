@@ -31,9 +31,21 @@
 | **月度账单** | 按月生成渠道 / 模型 / 工具分列汇总，一键导出 CSV |
 | **预算告警** | 日 / 月预算，达 80% 提醒、100% 告警；顶栏横幅提示 + 桌面系统通知（每天每级最多一次） |
 | **数据导出** | 调用明细按当前筛选导出 CSV / JSON（封顶 10 万行，含来源 / 项目 / TTFT / 错误类型列），价目表一键导出 CSV（含缓存价） |
+| **跨会话全文搜索** | 按 keyword 搜索 ZCode / Claude Code / Codex 的消息正文与会话标题，命中片段高亮，点击直达会话详情（扫描量有三重上限，防大目录拖垮） |
+| **What-if 成本模拟** | 选择一个目标模型，把范围内全部 tokens 按其单价重新计价：实际费用 / 模拟费用 / 差额一目了然，辅助选模型与中转渠道 |
+| **缓存命中率** | 整体与分渠道命中率（缓存读 /（纯输入 + 缓存读））+ 按日趋势，命中率低说明 prompt 每轮变化过大 |
+| **订阅渠道回本** | 设置页标记包月订阅渠道后，月度账单区分「等价市场价值 vs 实际支出（订阅费 + 按量部分）」并计算订阅是否回本 |
+| **成本异常检测** | 按近 90 天「有消耗日」为基线（均值 ±2 标准差），趋势图上红点标记异常日，tooltip 显示偏离倍数（无需手动设预算） |
+| **日报 / 周报 / 月报** | 一键生成 Markdown 摘要：费用环比、tokens 拆分、成功率、最费渠道 / 模型 / 项目 / 会话，支持复制与下载 .md |
+| **趋势图下钻** | 点击趋势图任意时间桶，自动带日期区间跳转到调用明细 |
+| **Webhook 告警推送** | 预算告警推送到钉钉 / 飞书 / 企业微信 / 自定义 JSON 接收端（5 分钟轮询，每天每级最多一次），支持测试推送；URL 也可用环境变量 `TOKENVIEW_WEBHOOK_URL` 配置 |
+| **上报接口测试面板** | 设置页按本机实际地址生成 curl / JavaScript / Python 示例代码（含鉴权头占位），一键发送测试上报验证对接 |
+| **数据备份 / 恢复** | 上报数据、自定义单价、预算、应用设置、在线价目快照打包为单个 JSON 导出；导入时逐文件校验、未知/损坏文件自动跳过、原子写回并即时生效 |
+| **上报数据保留策略** | reports.jsonl 按最长时间 / 最大条数自动裁剪（保存后立即执行一次），防止长期挂机无限增长 |
 | **数据源健康** | 设置页查看各数据源行数、最近使用、解密状态 |
 | **ZCode 数据位置** | ZCode 数据目录被移动或自定义导致读取为空时，可在设置页手动指定 `.zcode` 根目录（桌面版可浏览选择，浏览器版粘贴路径）；库缺失时该源自动降级为空并提示，不再影响其他数据源 |
 | **系统托盘** | 桌面版托盘图标（显示窗口 / 退出），可选「关闭时最小化到托盘」 |
+| **开机自启** | 桌面版可选随系统启动，静默驻留托盘不弹窗（设置页开启；托盘不可用时自动回退为正常弹窗） |
 
 ---
 
@@ -230,6 +242,17 @@ curl -X POST http://127.0.0.1:3000/api/usage/report \
 | GET | `/api/stats/session/detail?session_id=&source=zcode` | 会话详情（用量汇总 + 最近消息预览，消息仅 ZCode） |
 | GET | `/api/stats/errors?days=30` | 错误与中断分析（失败率 / 错误类型分布 / 中断 / 重试 / 上下文超限） |
 | GET | `/api/stats/tool-usage?days=30&limit=30` | 工具调用分析（ZCode tool_usage 真实记录聚合） |
+| GET | `/api/stats/search?q=&days=all&limit=20` | 跨会话全文搜索（ZCode / Claude Code / Codex 消息正文 + 会话标题，关键词片段高亮） |
+| GET | `/api/stats/cache?days=30` | 缓存命中率（整体 / 按日趋势 / 分渠道） |
+| GET | `/api/stats/whatif?days=30&model=` | What-if 成本模拟（model 为空返回实际费用与模型列表） |
+| GET | `/api/stats/anomalies?days=90` | 成本异常检测（均值 ±2 标准差，活跃天数不足 5 天不判定） |
+| GET | `/api/stats/digest?period=week` | 日报 / 周报 / 月报 Markdown 摘要（period = day / week / month） |
+| POST | `/api/stats/settings/webhook` | 保存 Webhook 配置 `{enabled, url, type: dingtalk/feishu/wecom/generic}` |
+| POST | `/api/stats/webhook/test` | 发送 Webhook 测试推送（未配置返回 400） |
+| POST | `/api/stats/settings/subscription` | 保存订阅渠道列表 `{list: [{name, monthly_fee}]}`（全量替换，上限 20 个） |
+| POST | `/api/stats/settings/retention` | 保存上报保留策略 `{enabled, max_age_days, max_lines}`（保存后立即裁剪一次） |
+| GET | `/api/stats/backup/export` | 导出数据备份（JSON bundle：上报数据 / 自定义价 / 预算 / 设置 / 在线价快照） |
+| POST | `/api/stats/backup/import` | 导入数据备份（同结构 JSON；逐文件校验，未知/损坏跳过，原子写回） |
 | POST | `/api/stats/settings/zcode-dir` | 设置 ZCode 数据目录 `{dir: "D:/x/.zcode"}`（空串恢复默认；要求目录下存在 `cli/db/db.sqlite`） |
 | GET | `/api/stats/projects?days=30&limit=15` | 项目维度统计 |
 | GET | `/api/stats/bill/months` | 有数据的月份列表 |
@@ -237,7 +260,7 @@ curl -X POST http://127.0.0.1:3000/api/usage/report \
 | GET | `/api/stats/budget` | 预算配置与当前状态（今日 / 本月费用、占比、告警级别） |
 | POST | `/api/stats/budget` | 保存预算 `{daily, monthly, enabled}`（元，0 为不限） |
 | GET | `/api/stats/health` | 数据源健康（各来源行数 / 最近使用 / 解密状态） |
-| GET | `/api/stats/settings` | 应用设置（汇率覆盖值与当前生效汇率） |
+| GET | `/api/stats/settings` | 应用设置（汇率覆盖值与当前生效汇率、Webhook、订阅渠道、保留策略、上报接口信息） |
 | POST | `/api/stats/settings/fx` | 保存汇率覆盖 `{rate}`（`null` 清除覆盖，保存后本地重算在线价目） |
 | GET | `/api/stats/usage/export?format=csv&channel=&source=&status=&start=&end=` | 明细导出（CSV / JSON，按筛选，封顶 10 万行） |
 | GET | `/api/health` | 健康检查 |
@@ -285,7 +308,10 @@ tokenView/
 │   │   │   ├── zcode.js / claude-code.js / codex.js / workbuddy.js
 │   │   │   ├── lobsterai.js / joyclaw.js / codebuddy-cn.js / qoder.js
 │   │   │   ├── vscode-secret.js # VS Code secret 解密工具（DPAPI + AES-GCM）
-│   │   │   ├── reports.js      # 上报存储（JSONL，幂等）
+│   │   │   ├── reports.js      # 上报存储（JSONL，幂等，支持保留策略裁剪）
+│   │   │   ├── search.js       # 跨会话全文搜索（ZCode LIKE + Claude Code/Codex JSONL 扫描）
+│   │   │   ├── webhook.js      # Webhook 告警推送（钉钉/飞书/企微/自定义 + 预算轮询）
+│   │   │   ├── backup.js       # 数据备份/恢复（JSON bundle，原子写回）
 │   │   │   ├── custom-prices.js # 自定义模型单价（覆盖默认价表）
 │   │   │   ├── budget.js / settings.js # 预算配置 / 应用设置（JSON 持久化）
 │   │   │   ├── usage-export.js  # 明细 CSV 序列化（BOM + 公式注入转义）

@@ -94,6 +94,136 @@
             </div>
           </section>
 
+          <!-- Webhook 告警推送 -->
+          <section class="sm-sec">
+            <div class="sm-sec-title">Webhook 告警推送</div>
+            <div class="sm-row">
+              <label class="sm-check">
+                <input v-model="webhook.enabled" type="checkbox" :disabled="webhook.env_locked" />
+                启用 Webhook 推送（预算达到 80% / 100% 时推送，每天每级最多一次）
+              </label>
+            </div>
+            <div class="sm-row sm-two-col">
+              <label>
+                <span class="sm-label">推送目标类型</span>
+                <select v-model="webhook.type" class="sm-input" :disabled="webhook.env_locked">
+                  <option value="dingtalk">钉钉机器人</option>
+                  <option value="feishu">飞书机器人</option>
+                  <option value="wecom">企业微信机器人</option>
+                  <option value="generic">自定义（JSON）</option>
+                </select>
+              </label>
+              <label>
+                <span class="sm-label">Webhook URL（{{ webhook.type === 'generic' ? 'POST JSON' : '机器人 Webhook 地址' }}）</span>
+                <input v-model="webhook.url" type="text" class="sm-input" placeholder="https://..." :disabled="webhook.env_locked" />
+              </label>
+            </div>
+            <div class="sm-row sm-inline">
+              <button class="sm-btn" :disabled="savingWebhook || webhook.env_locked" @click="saveWebhook">{{ savingWebhook ? '保存中...' : '保存 Webhook' }}</button>
+              <button class="sm-btn sm-btn-ghost" :disabled="testingWebhook" @click="doTestWebhook">{{ testingWebhook ? '推送中...' : '发送测试推送' }}</button>
+            </div>
+            <div v-if="webhookMessage" class="sm-note" :class="{ 'sm-error': webhookFail }">{{ webhookMessage }}</div>
+            <div v-if="webhook.env_locked" class="sm-error">已通过环境变量 TOKENVIEW_WEBHOOK_URL 配置，界面设置不生效；如需修改请先清除环境变量。</div>
+            <div class="sm-note">URL 仅保存在本机数据目录；钉钉/飞书机器人请把服务器出口 IP 加入白名单（本机部署通常无需配置）。</div>
+          </section>
+
+          <!-- 订阅渠道（账单等价价值视图） -->
+          <section class="sm-sec">
+            <div class="sm-sec-title">订阅渠道（包月制）</div>
+            <div class="sm-note" style="margin:0 0 8px;">
+              标记为包月订阅的渠道，在月度账单中按「等价市场价值 vs 实际支出（订阅费 + 按量部分）」呈现，并计算订阅是否回本。渠道名需与仪表盘中的渠道名一致。
+            </div>
+            <div v-for="(s, i) in subs" :key="s.name" class="sm-inline" style="margin-bottom:6px;">
+              <span class="sm-label" style="margin:0;color:var(--text-main);">{{ s.name }}</span>
+              <span class="sm-label" style="margin:0;">月费 {{ fmtCost(s.monthly_fee) }}</span>
+              <button class="sm-btn sm-btn-ghost" @click="removeSub(i)">移除</button>
+            </div>
+            <div v-if="!subs.length" class="sm-note">尚未标记订阅渠道</div>
+            <div class="sm-row sm-inline" style="margin-top:8px;">
+              <input v-model="subName" type="text" class="sm-input" style="width:180px;" placeholder="渠道名（与仪表盘一致）" />
+              <input v-model="subFee" type="number" min="0" step="1" class="sm-input" style="width:120px;" placeholder="月费（元）" />
+              <button class="sm-btn" :disabled="!subName.trim() || subFee === ''" @click="addSub">添加</button>
+            </div>
+            <div v-if="subMessage" class="sm-note">{{ subMessage }}</div>
+          </section>
+
+          <!-- 上报数据保留策略 -->
+          <section class="sm-sec">
+            <div class="sm-sec-title">上报数据保留策略</div>
+            <div class="sm-note" style="margin:0 0 8px;">
+              上报接口的数据（reports.jsonl）目前共 {{ fmtNum(reportInfo.records) }} 条。启用后按「最长时间」与「最大条数」自动裁剪（两项可同时生效，0 为不限）；每次上报后检查。
+            </div>
+            <div class="sm-row">
+              <label class="sm-check">
+                <input v-model="retention.enabled" type="checkbox" />
+                启用保留策略（超出部分将被永久删除，建议先在下方导出备份）
+              </label>
+            </div>
+            <div class="sm-row sm-two-col">
+              <label>
+                <span class="sm-label">最长保留（天，0 为不限）</span>
+                <input v-model="retention.max_age_days" type="number" min="0" step="1" class="sm-input" />
+              </label>
+              <label>
+                <span class="sm-label">最大条数（0 为不限）</span>
+                <input v-model="retention.max_lines" type="number" min="0" step="100" class="sm-input" />
+              </label>
+            </div>
+            <div class="sm-row sm-inline">
+              <button class="sm-btn" :disabled="savingRetention" @click="saveRetention">{{ savingRetention ? '保存中...' : '保存并立即裁剪' }}</button>
+            </div>
+            <div v-if="retentionMessage" class="sm-note" :class="{ 'sm-error': retentionFail }">{{ retentionMessage }}</div>
+          </section>
+
+          <!-- 上报接口测试 -->
+          <section class="sm-sec">
+            <div class="sm-sec-title">上报接口测试</div>
+            <div class="sm-row sm-inline">
+              <span class="sm-label" style="margin:0;">本机地址：<b style="color:var(--text-main);">{{ origin }}</b></span>
+              <span class="tag" :class="reportInfo.auth_enabled ? 'tag-fail' : 'tag-ok'">{{ reportInfo.auth_enabled ? '已启用鉴权' : '未启用鉴权' }}</span>
+            </div>
+            <div class="sm-row sm-inline">
+              <div class="seg">
+                <button v-for="l in Object.keys(reportSamples)" :key="l" :class="{ active: sampleLang === l }" @click="sampleLang = l">{{ l }}</button>
+              </div>
+              <button class="sm-btn sm-btn-ghost" @click="copySample">复制代码</button>
+            </div>
+            <pre class="sm-code">{{ reportSamples[sampleLang] }}</pre>
+            <div class="sm-row sm-inline">
+              <button class="sm-btn" :disabled="sendingTest" @click="sendTest">{{ sendingTest ? '发送中...' : '发送测试上报' }}</button>
+              <span class="sm-note" style="margin:0;">测试上报会写入真实统计（渠道 tokenview-test），可在调用明细中查看，也可被保留策略清理。</span>
+            </div>
+            <div v-if="testMessage" class="sm-note" :class="{ 'sm-error': testFail }">{{ testMessage }}</div>
+            <div v-if="reportInfo.auth_enabled" class="sm-note">启用鉴权后测试上报需在环境变量 TOKENVIEW_REPORT_TOKEN 对应的请求头 x-report-token 中携带令牌；示例代码中的令牌为占位符，请自行替换。</div>
+          </section>
+
+          <!-- 数据备份 / 恢复 -->
+          <section class="sm-sec">
+            <div class="sm-sec-title">数据备份 / 恢复</div>
+            <div class="sm-note" style="margin:0 0 8px;">
+              打包上报数据、自定义单价、预算、应用设置与在线价目快照为单个 JSON 文件；导入时逐文件校验，未知或损坏文件自动跳过。
+            </div>
+            <div class="sm-row sm-inline">
+              <button class="sm-btn" :disabled="exportingBackup" @click="doExportBackup">{{ exportingBackup ? '导出中...' : '导出备份' }}</button>
+              <label class="sm-btn" style="cursor:pointer;">
+                选择备份文件...
+                <input type="file" accept=".json,application/json" style="display:none;" @change="onBackupFile" />
+              </label>
+            </div>
+            <div v-if="pendingImport" class="sm-import-box">
+              <div class="sm-label">备份时间：{{ pendingImport.exported_at || '未知' }}，包含：</div>
+              <div v-for="f in pendingImport.fileList" :key="f.name" class="sm-label" style="margin-left:10px;">
+                {{ f.name }}{{ f.present ? `（${fmtNum(Math.ceil(f.bytes / 1024))} KB）` : '（备份中不存在）' }}
+              </div>
+              <div class="sm-error" style="margin-top:6px;">导入将覆盖当前同名配置（含 Webhook / 订阅渠道等全部设置），确定继续吗？</div>
+              <div class="sm-inline">
+                <button class="sm-btn" :disabled="importingBackup" @click="doImportBackup">{{ importingBackup ? '导入中...' : '确认导入' }}</button>
+                <button class="sm-btn sm-btn-ghost" :disabled="importingBackup" @click="pendingImport = null">取消</button>
+              </div>
+            </div>
+            <div v-if="backupMessage" class="sm-note" :class="{ 'sm-error': backupFail }">{{ backupMessage }}</div>
+          </section>
+
           <!-- 数据源健康 -->
           <section class="sm-sec">
             <div class="sm-sec-title">数据源健康</div>
@@ -126,7 +256,7 @@
           </section>
 
           <!-- 桌面端选项 -->
-          <section v-if="trayAvailable" class="sm-sec">
+          <section v-if="trayAvailable || autoLaunchAvailable" class="sm-sec">
             <div class="sm-sec-title">桌面端</div>
             <div class="sm-row">
               <label class="sm-check">
@@ -138,6 +268,16 @@
                 关闭窗口时最小化到系统托盘（不勾选则保持原有行为：关闭即退出）
               </label>
             </div>
+            <div v-if="autoLaunchAvailable" class="sm-row">
+              <label class="sm-check">
+                <input
+                  type="checkbox"
+                  :checked="autoLaunch"
+                  @change="setAutoLaunch($event.target.checked)"
+                />
+                开机自启（随系统启动并静默最小化到托盘，不弹出窗口）
+              </label>
+            </div>
           </section>
         </div>
       </div>
@@ -146,9 +286,14 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
-import { fetchBudget, saveBudget, fetchHealth, fetchSettings, saveFxRate, saveZcodeDir } from '../api';
+import { computed, reactive, ref, watch } from 'vue';
+import {
+  fetchBudget, saveBudget, fetchHealth, fetchSettings, saveFxRate, saveZcodeDir,
+  saveWebhookSettings, testWebhook, saveSubscriptionChannels, saveRetentionSettings,
+  sendTestReport, downloadBackup, importBackup
+} from '../api';
 import { fmtCost, fmtNum } from '../utils/format';
+import { saveBlobResponse } from '../utils/download';
 
 const props = defineProps({
   visible: { type: Boolean, default: false }
@@ -177,6 +322,288 @@ const health = ref([]);
 
 const trayAvailable = !!(typeof window !== 'undefined' && window.tokenview && window.tokenview.setCloseToTray);
 const closeToTray = ref(trayAvailable ? !!window.tokenview.getCloseToTray() : false);
+
+const autoLaunchAvailable = !!(typeof window !== 'undefined' && window.tokenview && window.tokenview.setAutoLaunch);
+const autoLaunch = ref(autoLaunchAvailable ? !!window.tokenview.getAutoLaunch() : false);
+
+/* ---- Webhook 告警推送 ---- */
+const webhook = reactive({ enabled: false, url: '', type: 'dingtalk', env_locked: false });
+const savingWebhook = ref(false);
+const testingWebhook = ref(false);
+const webhookMessage = ref('');
+const webhookFail = ref(false);
+
+async function saveWebhook() {
+  webhookMessage.value = '';
+  webhookFail.value = false;
+  const url = webhook.url.trim();
+  if (url && !/^https?:\/\//i.test(url)) {
+    webhookMessage.value = 'URL 需以 http(s):// 开头';
+    webhookFail.value = true;
+    return;
+  }
+  savingWebhook.value = true;
+  try {
+    const r = await saveWebhookSettings(webhook.enabled, url, webhook.type);
+    Object.assign(webhook, { enabled: r.enabled, url: r.url, type: r.type, env_locked: r.env_locked });
+    webhookMessage.value = r.url ? '已保存，预算告警将按新配置推送' : '已清除 Webhook 配置';
+  } catch (e) {
+    webhookMessage.value = e.message || '保存失败';
+    webhookFail.value = true;
+  } finally {
+    savingWebhook.value = false;
+  }
+}
+
+async function doTestWebhook() {
+  webhookMessage.value = '';
+  webhookFail.value = false;
+  testingWebhook.value = true;
+  try {
+    const r = await testWebhook();
+    webhookMessage.value = r.message || '推送成功';
+  } catch (e) {
+    webhookMessage.value = e.message || '推送失败';
+    webhookFail.value = true;
+  } finally {
+    testingWebhook.value = false;
+  }
+}
+
+/* ---- 订阅渠道 ---- */
+const subs = ref([]);
+const subName = ref('');
+const subFee = ref('');
+const subMessage = ref('');
+
+async function persistSubs(next, note) {
+  try {
+    subs.value = await saveSubscriptionChannels(next);
+    subMessage.value = note || '已保存';
+  } catch (e) {
+    subMessage.value = e.message || '保存失败';
+  }
+}
+
+function addSub() {
+  const name = subName.value.trim();
+  const fee = Number(subFee.value);
+  if (!name) return;
+  if (!Number.isFinite(fee) || fee < 0) {
+    subMessage.value = '月费必须为不小于 0 的数字';
+    return;
+  }
+  if (subs.value.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+    subMessage.value = '该渠道已在列表中（如需调整费率请先移除再添加）';
+    return;
+  }
+  subName.value = '';
+  subFee.value = '';
+  persistSubs([...subs.value, { name, monthly_fee: fee }], `已添加「${name}」`);
+}
+
+function removeSub(i) {
+  const removed = subs.value[i];
+  persistSubs(subs.value.filter((_, idx) => idx !== i), `已移除「${removed.name}」`);
+}
+
+/* ---- 上报数据保留策略 ---- */
+const retention = reactive({ enabled: false, max_age_days: 0, max_lines: 0 });
+const savingRetention = ref(false);
+const retentionMessage = ref('');
+const retentionFail = ref(false);
+
+async function saveRetention() {
+  retentionMessage.value = '';
+  retentionFail.value = false;
+  const age = Math.max(0, Math.floor(Number(retention.max_age_days) || 0));
+  const lines = Math.max(0, Math.floor(Number(retention.max_lines) || 0));
+  if (retention.enabled && !age && !lines) {
+    retentionMessage.value = '启用后至少要填写一项阈值（天数或条数）';
+    retentionFail.value = true;
+    return;
+  }
+  savingRetention.value = true;
+  try {
+    const r = await saveRetentionSettings(retention.enabled, age, lines);
+    Object.assign(retention, { enabled: r.enabled, max_age_days: r.max_age_days, max_lines: r.max_lines });
+    const applied = r.applied;
+    retentionMessage.value = applied && applied.removed > 0
+      ? `已保存并裁剪：删除 ${applied.removed} 条，保留 ${applied.kept} 条`
+      : '已保存（当前无需裁剪）';
+    if (r.apply_error) {
+      retentionMessage.value += `；裁剪失败：${r.apply_error}`;
+      retentionFail.value = true;
+    }
+  } catch (e) {
+    retentionMessage.value = e.message || '保存失败';
+    retentionFail.value = true;
+  } finally {
+    savingRetention.value = false;
+  }
+}
+
+/* ---- 上报接口测试 ---- */
+const reportInfo = reactive({ auth_enabled: false, records: 0, bytes: 0 });
+const origin = typeof window !== 'undefined' ? window.location.origin : '';
+const sampleLang = ref('curl');
+const sampleLangs = ['curl', 'JavaScript', 'Python'];
+const sendingTest = ref(false);
+const testMessage = ref('');
+const testFail = ref(false);
+
+function buildSample(lang) {
+  const tokenHeader = reportInfo.auth_enabled;
+  if (lang === 'curl') {
+    return [
+      `curl -X POST ${origin}/api/usage/report \\`,
+      `  -H "Content-Type: application/json" \\`,
+      ...(tokenHeader ? [`  -H "x-report-token: <替换为令牌>" \\`] : []),
+      `  -d '{"channel":"deepseek","model":"deepseek-chat","prompt_tokens":1234,"completion_tokens":567,"tool":"Trae","request_id":"demo-001"}'`
+    ].join('\n');
+  }
+  if (lang === 'JavaScript') {
+    return [
+      `const res = await fetch('${origin}/api/usage/report', {`,
+      `  method: 'POST',`,
+      `  headers: { 'Content-Type': 'application/json'${tokenHeader ? ", 'x-report-token': '<替换为令牌>'" : ''} },`,
+      `  body: JSON.stringify({`,
+      `    channel: 'deepseek', model: 'deepseek-chat',`,
+      `    prompt_tokens: 1234, completion_tokens: 567,`,
+      `    tool: 'Trae', request_id: 'demo-001'`,
+      `  })`,
+      `});`,
+      `console.log(await res.json());`
+    ].join('\n');
+  }
+  return [
+    `import requests`,
+    ``,
+    `res = requests.post('${origin}/api/usage/report', json={`,
+    `    'channel': 'deepseek', 'model': 'deepseek-chat',`,
+    `    'prompt_tokens': 1234, 'completion_tokens': 567,`,
+    `    'tool': 'Trae', 'request_id': 'demo-001',`,
+    `}, headers=${tokenHeader ? "{'x-report-token': '<替换为令牌>'}" : '{}'})`,
+    `print(res.json())`
+  ].join('\n');
+}
+
+const reportSamples = computed(() => ({
+  curl: buildSample('curl'),
+  JavaScript: buildSample('JavaScript'),
+  Python: buildSample('Python')
+}));
+
+async function copySample() {
+  try {
+    await navigator.clipboard.writeText(reportSamples.value[sampleLang.value]);
+    testMessage.value = '代码已复制到剪贴板';
+    testFail.value = false;
+  } catch { /* 剪贴板不可用（非安全上下文常见），静默 */ }
+}
+
+async function sendTest() {
+  testMessage.value = '';
+  testFail.value = false;
+  sendingTest.value = true;
+  try {
+    const r = await sendTestReport({
+      channel: 'tokenview-test',
+      model: 'deepseek-chat',
+      prompt_tokens: 1000,
+      completion_tokens: 500,
+      tool: 'api',
+      request_id: `tokenview-test-${Date.now()}`
+    });
+    testMessage.value = `上报成功：${r.total_tokens} tokens，估算费用 ${fmtCost(r.cost)}（request_id ${r.request_id}）`;
+  } catch (e) {
+    testMessage.value = e.message || '上报失败';
+    testFail.value = true;
+  } finally {
+    sendingTest.value = false;
+  }
+}
+
+/* ---- 数据备份 / 恢复 ---- */
+const exportingBackup = ref(false);
+const importingBackup = ref(false);
+const pendingImport = ref(null);
+const backupMessage = ref('');
+const backupFail = ref(false);
+
+async function doExportBackup() {
+  backupMessage.value = '';
+  backupFail.value = false;
+  exportingBackup.value = true;
+  try {
+    const res = await downloadBackup();
+    const stamp = new Date().toISOString().slice(0, 10);
+    saveBlobResponse(res, `tokenview-backup-${stamp}.json`);
+    backupMessage.value = '备份已导出';
+  } catch (e) {
+    backupMessage.value = e.message || '导出失败';
+    backupFail.value = true;
+  } finally {
+    exportingBackup.value = false;
+  }
+}
+
+async function onBackupFile(ev) {
+  backupMessage.value = '';
+  backupFail.value = false;
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = ''; // 允许重复选择同一文件
+  if (!file) return;
+  let bundle = null;
+  try {
+    bundle = JSON.parse(await file.text());
+  } catch {
+    backupMessage.value = '文件不是有效的 JSON';
+    backupFail.value = true;
+    return;
+  }
+  if (!bundle || bundle.app !== 'TokenView' || !bundle.files || typeof bundle.files !== 'object') {
+    backupMessage.value = '这不是 TokenView 的备份文件';
+    backupFail.value = true;
+    return;
+  }
+  pendingImport.value = {
+    bundle,
+    exported_at: bundle.exported_at,
+    fileList: Object.entries(bundle.files).map(([name, content]) => ({
+      name,
+      present: content != null,
+      bytes: typeof content === 'string' ? content.length : 0
+    }))
+  };
+}
+
+async function doImportBackup() {
+  if (!pendingImport.value || importingBackup.value) return;
+  importingBackup.value = true;
+  backupMessage.value = '';
+  backupFail.value = false;
+  try {
+    const r = await importBackup(JSON.stringify(pendingImport.value.bundle));
+    const skippedNote = r.skipped.length ? `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => s.name).join('、')}）` : '';
+    backupMessage.value = `${r.message}${skippedNote}；数据已即时生效`;
+    pendingImport.value = null;
+    emit('data-changed');
+  } catch (e) {
+    backupMessage.value = e.message || '导入失败';
+    backupFail.value = true;
+  } finally {
+    importingBackup.value = false;
+  }
+}
+
+/* ---- 桌面端开机自启 ---- */
+function setAutoLaunch(v) {
+  autoLaunch.value = !!v;
+  if (autoLaunchAvailable) {
+    try { window.tokenview.setAutoLaunch(!!v); } catch { /* IPC 不可用时忽略 */ }
+  }
+}
 
 const budget = {
   /** 预算占比文本（未设预算显示 —） */
@@ -226,6 +653,10 @@ async function loadAll() {
       });
       zcodeDirInput.value = s.zcode.dir_setting || '';
     }
+    if (s.webhook) Object.assign(webhook, s.webhook);
+    if (Array.isArray(s.subscription_channels)) subs.value = s.subscription_channels;
+    if (s.retention) Object.assign(retention, s.retention);
+    if (s.report) Object.assign(reportInfo, s.report);
   } catch { /* 同上 */ }
   try {
     const h = await fetchHealth();
@@ -477,6 +908,27 @@ watch(() => props.visible, (v) => {
 }
 .sm-error { color: var(--red); font-size: 11.5px; margin-bottom: 8px; }
 .sm-note { color: var(--text-faint); font-size: 11px; margin-top: 6px; }
+.sm-note.sm-error { color: var(--red); }
+.sm-code {
+  background: var(--bg-0);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-main);
+  overflow-x: auto;
+  white-space: pre;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  margin-bottom: 8px;
+}
+.sm-import-box {
+  background: var(--bg-0);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px;
+  margin-top: 8px;
+}
 .sm-reason {
   margin-left: 8px;
   font-size: 11px;

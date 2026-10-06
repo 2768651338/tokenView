@@ -16,7 +16,7 @@
         <div class="bill-sum-value">{{ fmtTokens(summary.tokens) }}</div>
       </div>
       <div class="bill-sum-item">
-        <div class="bill-sum-label">月费用</div>
+        <div class="bill-sum-label">月费用（市场价估算）</div>
         <div class="bill-sum-value" style="color:var(--amber);">{{ fmtCost(summary.cost) }}</div>
       </div>
       <div class="bill-sum-item">
@@ -29,13 +29,35 @@
       </div>
     </div>
 
+    <!-- 订阅渠道回本视图：市场价费用对包月渠道是等价价值而非现金支出 -->
+    <div v-if="summary && summary.market_value != null" class="bill-sub">
+      <div class="bill-sub-item">
+        <div class="bill-sum-label">等价市场价值</div>
+        <div class="bill-sub-value">{{ fmtCost(summary.market_value) }}</div>
+      </div>
+      <div class="bill-sub-item">
+        <div class="bill-sum-label">实际支出（订阅费 + 按量部分）</div>
+        <div class="bill-sub-value">{{ fmtCost(summary.actual_spend) }}</div>
+      </div>
+      <div class="bill-sub-item">
+        <div class="bill-sum-label">订阅节省</div>
+        <div class="bill-sub-value" :style="summary.subscription_saved >= 0 ? 'color:var(--green);' : 'color:var(--red);'">
+          {{ summary.subscription_saved >= 0 ? '' : '-' }}{{ fmtCost(Math.abs(summary.subscription_saved)) }}
+        </div>
+      </div>
+      <div class="bill-sub-note">{{ summary.subscription_note }}；可在「设置 - 订阅渠道」中维护标记。节省为负说明订阅费高于该渠道等价用量。</div>
+    </div>
+
     <div class="bill-cols">
       <div class="table-wrap" style="max-height:220px;">
         <table class="usage-table">
           <thead><tr><th>渠道</th><th style="text-align:right;">Tokens</th><th style="text-align:right;">费用</th></tr></thead>
           <tbody>
             <tr v-for="c in byChannel" :key="'c' + c.name">
-              <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;" :title="c.name">{{ c.name }}</td>
+              <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;" :title="c.name">
+                {{ c.name }}
+                <span v-if="c.subscription" class="bill-sub-tag" :title="`订阅制渠道，月费 ${fmtCost(c.monthly_fee)}`">订阅</span>
+              </td>
               <td style="text-align:right;">{{ fmtTokens(c.tokens) }}</td>
               <td style="text-align:right;color:var(--amber);">{{ fmtCost(c.cost) }}</td>
             </tr>
@@ -156,6 +178,35 @@ defineExpose({ loadMonths });
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+.bill-sub {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 8px 20px;
+  align-items: center;
+  background: var(--bg-0);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+.bill-sub-value {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bill-sub-note { font-size: 10.5px; color: var(--text-faint); }
+.bill-sub-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--accent);
+  border: 1px solid var(--card-border);
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: help;
+  vertical-align: 1px;
 }
 @media (max-width: 1100px) {
   .bill-cols { grid-template-columns: 1fr; }

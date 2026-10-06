@@ -26,6 +26,7 @@ const ccSwitch = require('./cc-switch');
 const reports = require('./reports');
 const priceTable = require('./custom-prices');
 const budget = require('./budget');
+const appSettings = require('./settings');
 const path = require('path');
 
 /** 固定工具清单（展示顺序与用户定义一致） */
@@ -789,7 +790,7 @@ function groupBy(rows, keyOf) {
     .map((g) => ({ name: g.name, tokens: g.tokens, cost: Number(g.cost.toFixed(2)), calls: g.calls }));
 }
 
-/** 月度账单：指定月份的渠道 / 模型 / 工具分列汇总 */
+/** 月度账单：指定月份的渠道 / 模型 / 工具分列汇总；订阅渠道额外给出「实际支出 vs 等价市场价值」 */
 async function getBill(month) {
   const m = String(month || '').trim();
   if (!/^\d{4}-\d{2}$/.test(m)) return { error: 'month 格式应为 YYYY-MM' };
@@ -798,17 +799,45 @@ async function getBill(month) {
   const end = new Date(y, mo, 1).getTime();
   const rows = await getAllRows(start, end - 1);
   const dayKeys = new Set(rows.map((r) => fmtDay(r.createdAt)));
+  const byChannel = groupBy(rows, (r) => r.channel);
+  const byModel = groupBy(rows, (r) => r.model).slice(0, 20);
+  const byTool = groupBy(rows, (r) => r.source);
+
+  // 订阅渠道视角：市场价费用对包月渠道是「等价价值」而非现金支出；
+  // 订阅费按「该月有用量的订阅渠道」计入（未使用月份无从核实是否续订，不臆计）
+  const subs = appSettings.getSubscriptionChannels();
+  const subMap = new Map(subs.map((s) => [s.name.toLowerCase(), s]));
+  const usedSubs = [];
+  let subMarketValue = 0;
+  for (const c of byChannel) {
+    const s = subMap.get(c.name.toLowerCase());
+    if (!s) continue;
+    c.subscription = true;
+    c.monthly_fee = s.monthly_fee;
+    subMarketValue += c.cost;
+    usedSubs.push(s);
+  }
+  const summary = {
+    tokens: rows.reduce((s, r) => s + r.totalTokens, 0),
+    cost: Number(rows.reduce((s, r) => s + r.cost, 0).toFixed(2)),
+    calls: rows.length,
+    active_days: dayKeys.size
+  };
+  if (usedSubs.length) {
+    const fees = usedSubs.reduce((s, x) => s + x.monthly_fee, 0);
+    summary.market_value = summary.cost;
+    summary.actual_spend = Number((summary.cost - subMarketValue + fees).toFixed(2));
+    summary.subscription_saved = Number((summary.cost - summary.actual_spend).toFixed(2));
+    summary.subscription_fees = Number(fees.toFixed(2));
+    summary.subscription_note = `含 ${usedSubs.length} 个订阅渠道，按该月有用量的订阅费 ${yuan(fees)} 计入实际支出`;
+  }
   return {
     month: m,
-    summary: {
-      tokens: rows.reduce((s, r) => s + r.totalTokens, 0),
-      cost: Number(rows.reduce((s, r) => s + r.cost, 0).toFixed(2)),
-      calls: rows.length,
-      active_days: dayKeys.size
-    },
-    by_channel: groupBy(rows, (r) => r.channel),
-    by_model: groupBy(rows, (r) => r.model).slice(0, 20),
-    by_tool: groupBy(rows, (r) => r.source)
+    summary,
+    subscription_channels: usedSubs,
+    by_channel: byChannel,
+    by_model: byModel,
+    by_tool: byTool
   };
 }
 
@@ -1102,12 +1131,323 @@ async function getToolUsage(days = 30, limit = 30) {
   };
 }
 
+/* ---------- 拓展统计：缓存命中率 / What-if / 异常检测 / 摘要 / 订阅账单 ---------- */
+
+/** 缓存命中率 = 缓存读 / (纯输入 + 缓存读)；无基数的桶返回 null（前端断线） */
+function hitRate(cacheRead, input) {
+  const denom = cacheRead + input;
+  return denom > 0 ? Number((cacheRead / denom * 100).toFixed(2)) : null;
+}
+
+/** 缓存命中率分析：整体 + 按日趋势 + 分渠道 */
+async function getCacheStats(days = 30) {
+  const [start, end] = parseRange(days);
+  const rows = await getAllRows(start, end);
+  const byDay = new Map();   // label -> { label, input, cache_read }
+  const byChannel = new Map(); // channel -> { channel, input, cache_read, calls, cache_calls }
+  let input = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  for (const r of rows) {
+    input += r.promptTokens;
+    cacheRead += r.cacheReadTokens;
+    cacheWrite += r.cacheWriteTokens;
+    const label = fmtDay(r.createdAt);
+    const d = byDay.get(label) || { label, input: 0, cache_read: 0 };
+    d.input += r.promptTokens;
+    d.cache_read += r.cacheReadTokens;
+    byDay.set(label, d);
+    const c = byChannel.get(r.channel) || { channel: r.channel, input: 0, cache_read: 0, calls: 0, cache_calls: 0 };
+    c.input += r.promptTokens;
+    c.cache_read += r.cacheReadTokens;
+    c.calls += 1;
+    if (r.cacheReadTokens > 0) c.cache_calls += 1;
+    byChannel.set(r.channel, c);
+  }
+  return {
+    overall: {
+      hit_rate: hitRate(cacheRead, input),
+      input_tokens: input,
+      cache_read_tokens: cacheRead,
+      cache_write_tokens: cacheWrite
+    },
+    list: [...byDay.values()]
+      .sort((a, b) => a.label < b.label ? -1 : 1)
+      .map((d) => ({ label: d.label, hit_rate: hitRate(d.cache_read, d.input), input_tokens: d.input, cache_read_tokens: d.cache_read })),
+    channels: [...byChannel.values()]
+      .sort((a, b) => (b.cache_read + b.input) - (a.cache_read + a.input))
+      .slice(0, 12)
+      .map((c) => ({
+        channel: c.channel,
+        hit_rate: hitRate(c.cache_read, c.input),
+        input_tokens: c.input,
+        cache_read_tokens: c.cache_read,
+        calls: c.calls,
+        cache_calls: c.cache_calls
+      }))
+  };
+}
+
+/**
+ * What-if 成本模拟：把时间范围内的全部 tokens 按单一目标模型单价重新计价。
+ * 缓存价沿用目标模型的真实缓存价（无则按价率估算），与 computeRowCost 单一口径。
+ */
+async function getWhatIf(days = 30, targetModel = '') {
+  const [start, end] = parseRange(days);
+  const rows = await getAllRows(start, end);
+  const totals = { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  let actualCost = 0;
+  const perModel = new Map(); // model -> { model, tokens 拆分, actual_cost, calls }
+  for (const r of rows) {
+    totals.promptTokens += r.promptTokens;
+    totals.completionTokens += r.completionTokens;
+    totals.cacheReadTokens += r.cacheReadTokens;
+    totals.cacheWriteTokens += r.cacheWriteTokens;
+    actualCost += r.cost;
+    const m = perModel.get(r.model) || {
+      model: r.model, prompt_tokens: 0, completion_tokens: 0,
+      cache_read_tokens: 0, cache_write_tokens: 0, actual_cost: 0, calls: 0
+    };
+    m.prompt_tokens += r.promptTokens;
+    m.completion_tokens += r.completionTokens;
+    m.cache_read_tokens += r.cacheReadTokens;
+    m.cache_write_tokens += r.cacheWriteTokens;
+    m.actual_cost += r.cost;
+    m.calls += 1;
+    perModel.set(r.model, m);
+  }
+  const models = [...perModel.values()]
+    .sort((a, b) => b.actual_cost - a.actual_cost)
+    .map((m) => {
+      const p = priceOf(m.model);
+      return {
+        ...m,
+        actual_cost: Number(m.actual_cost.toFixed(4)),
+        input_per_million: Number((p.input * 1000).toFixed(2)),
+        output_per_million: Number((p.output * 1000).toFixed(2))
+      };
+    });
+  const result = {
+    days: days === 'all' ? null : Number(days),
+    totals: {
+      prompt_tokens: totals.promptTokens,
+      completion_tokens: totals.completionTokens,
+      cache_read_tokens: totals.cacheReadTokens,
+      cache_write_tokens: totals.cacheWriteTokens
+    },
+    actual_cost: Number(actualCost.toFixed(4)),
+    models,
+    target: null,
+    simulated_cost: null,
+    delta_cost: null,
+    note: ''
+  };
+  const model = String(targetModel || '').trim();
+  if (model) {
+    const prices = effectivePriceTable().prices;
+    const p = lookupPrice(prices, model);
+    if (!p) {
+      result.note = `价表中没有「${model}」的单价，请先在「模型市场价参考」中配置`;
+      return result;
+    }
+    const realCache = realPriceFor(model);
+    const simulated = computeRowCost(totals, p.input, p.output, realCache);
+    result.target = {
+      model,
+      input_per_million: Number((p.input * 1000).toFixed(2)),
+      output_per_million: Number((p.output * 1000).toFixed(2)),
+      cache_priced: !!(realCache && realCache.cacheRead != null)
+    };
+    result.simulated_cost = Number(simulated.toFixed(4));
+    result.delta_cost = Number((simulated - actualCost).toFixed(4));
+    result.note = realCache && realCache.cacheRead != null
+      ? '缓存按该模型的 CC Switch 真实缓存价计'
+      : '缓存按默认价率估算（读 10% / 写 125%）';
+  }
+  return result;
+}
+
+/**
+ * 成本异常检测：以窗口内「有消耗的日子」为基线（均值 ± 2 倍标准差），
+ * 消耗显著超出基线的日期被标记。活跃天数不足 5 天时不判定（基线不可信）。
+ */
+async function getAnomalies(days = 90) {
+  const [start, end] = parseRange(days);
+  const rows = await getAllRows(start, end);
+  const byDay = new Map(); // label -> cost
+  for (const r of rows) byDay.set(fmtDay(r.createdAt), (byDay.get(fmtDay(r.createdAt)) || 0) + r.cost);
+  const values = [...byDay.values()].filter((v) => v > 0);
+  const result = {
+    days: days === 'all' ? null : Number(days),
+    active_days: values.length,
+    mean: 0, std: 0, threshold: 0,
+    enabled: values.length >= 5,
+    list: [],
+    note: ''
+  };
+  if (!result.enabled) {
+    result.note = '活跃天数不足 5 天，暂不做异常判定';
+    return result;
+  }
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+  const std = Math.sqrt(variance);
+  const threshold = mean + 2 * std;
+  result.mean = Number(mean.toFixed(2));
+  result.std = Number(std.toFixed(2));
+  result.threshold = Number(threshold.toFixed(2));
+  result.list = [...byDay.entries()]
+    .filter(([, cost]) => cost > threshold)
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, cost]) => ({
+      label,
+      cost: Number(cost.toFixed(2)),
+      deviation: mean > 0 ? Number((cost / mean).toFixed(2)) : null
+    }));
+  return result;
+}
+
+/* ---------- 日报 / 周报 / 月报 Markdown 摘要 ---------- */
+
+/** 单期聚合：费用 / tokens / 调用 / 成功率 / 活跃天数 / 各维度 Top */
+function digestAggregate(rows) {
+  let cost = 0;
+  let tokens = 0;
+  let prompt = 0;
+  let completion = 0;
+  let cacheRead = 0;
+  let failed = 0;
+  const days = new Set();
+  const byChannel = new Map();
+  const byModel = new Map();
+  const byProject = new Map();
+  const bySession = new Map();
+  const topOf = (map, getCost) => {
+    let best = null;
+    for (const v of map.values()) {
+      if (!best || getCost(v) > getCost(best)) best = v;
+    }
+    return best;
+  };
+  for (const r of rows) {
+    cost += r.cost;
+    tokens += r.totalTokens;
+    prompt += r.promptTokens;
+    completion += r.completionTokens;
+    cacheRead += r.cacheReadTokens;
+    if (r.status !== 1) failed += 1;
+    days.add(fmtDay(r.createdAt));
+    const bump = (map, key, extra) => {
+      const it = map.get(key) || { name: key, cost: 0, ...extra };
+      it.cost += r.cost;
+      map.set(key, it);
+    };
+    bump(byChannel, r.channel, {});
+    bump(byModel, r.model, {});
+    if (r.project) bump(byProject, r.project, {});
+    if (r.sessionId) {
+      const key = `${r.source}::${r.sessionId}`;
+      const it = bySession.get(key) || { name: key, cost: 0, source: r.source, sessionId: r.sessionId, title: r.sessionTitle || '' };
+      it.cost += r.cost;
+      if (!it.title && r.sessionTitle) it.title = r.sessionTitle;
+      bySession.set(key, it);
+    }
+  }
+  const topSession = topOf(bySession, (v) => v.cost);
+  if (topSession && !topSession.title) {
+    const ex = topSession.source === 'zcode' ? zcode.getSessionExtras().get(topSession.sessionId) : null;
+    if (ex && ex.title) topSession.title = ex.title;
+  }
+  return {
+    cost, tokens, prompt, completion, cache_read: cacheRead, calls: rows.length, failed,
+    success_rate: rows.length ? Number(((rows.length - failed) / rows.length * 100).toFixed(2)) : 100,
+    active_days: days.size,
+    top_channel: topOf(byChannel, (v) => v.cost),
+    top_model: topOf(byModel, (v) => v.cost),
+    top_project: topOf(byProject, (v) => v.cost),
+    top_session: topSession
+  };
+}
+
+/** 期间区间：本期（进行中）+ 上期（完整期），返回 ms 与展示文本 */
+function digestRange(period) {
+  const now = new Date();
+  const day0 = (d) => { d.setHours(0, 0, 0, 0); return d.getTime(); };
+  if (period === 'week') {
+    const curStart = new Date(now);
+    curStart.setDate(curStart.getDate() - ((curStart.getDay() + 6) % 7));
+    const s = day0(curStart);
+    const prevStart = s - 7 * 86400000;
+    const prevEnd = s - 1;
+    return { cur: [s, now.getTime()], prev: [prevStart, prevEnd], title: '周报' };
+  }
+  if (period === 'month') {
+    const s = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const prevEnd = s - 1;
+    return { cur: [s, now.getTime()], prev: [prevStart, prevEnd], title: '月报' };
+  }
+  const s = day0(new Date(now));
+  return { cur: [s, now.getTime()], prev: [s - 86400000, s - 1], title: '日报' };
+}
+
+const yuan = (v) => `¥${Number(v || 0).toFixed(2)}`;
+const pctChange = (cur, prev) => {
+  if (!prev) return null;
+  return Number(((cur - prev) / prev * 100).toFixed(1));
+};
+const pctText = (v) => (v == null ? '（上期无数据）' : `环比 ${v > 0 ? '+' : ''}${v}%`);
+
+/** 日报 / 周报 / 月报 Markdown 摘要 */
+async function getDigest(period = 'week') {
+  const p = ['day', 'week', 'month'].includes(period) ? period : 'week';
+  const { cur, prev, title } = digestRange(p);
+  const [curStart, curEnd] = cur;
+  const [prevStart, prevEnd] = prev;
+  const all = await getAllRows();
+  const curRows = all.filter((r) => r.createdAt >= curStart && r.createdAt <= curEnd);
+  const prevRows = all.filter((r) => r.createdAt >= prevStart && r.createdAt <= prevEnd);
+  const a = digestAggregate(curRows);
+  const b = digestAggregate(prevRows);
+
+  const dayMs = (ms) => fmtDay(ms);
+  let rangeText;
+  if (p === 'month') {
+    const d = new Date(curStart);
+    rangeText = `${d.getFullYear()}-${pad(d.getMonth() + 1)}（进行中）`;
+  } else if (p === 'week') {
+    rangeText = `${dayMs(curStart)} ~ ${dayMs(curEnd)}（进行中）`;
+  } else {
+    rangeText = `${dayMs(curStart)}`;
+  }
+
+  const lines = [];
+  lines.push(`# TokenView ${title} · ${rangeText}`);
+  lines.push('');
+  lines.push('## 总览');
+  lines.push(`- 费用：${yuan(a.cost)}（上期 ${yuan(b.cost)}，${pctText(pctChange(a.cost, b.cost))}）`);
+  lines.push(`- Tokens：${a.tokens.toLocaleString('zh-CN')}（纯输入 ${a.prompt.toLocaleString('zh-CN')} / 缓存读 ${a.cache_read.toLocaleString('zh-CN')} / 输出 ${a.completion.toLocaleString('zh-CN')}）`);
+  lines.push(`- 调用：${a.calls.toLocaleString('zh-CN')} 次（上期 ${b.calls.toLocaleString('zh-CN')} 次），成功率 ${a.success_rate}%`);
+  lines.push(`- 活跃天数：${a.active_days} 天`);
+  lines.push('');
+  lines.push('## 消耗构成');
+  lines.push(`- 最费渠道：${a.top_channel ? `${a.top_channel.name}（${yuan(a.top_channel.cost)}）` : '无'}`);
+  lines.push(`- 最费模型：${a.top_model ? `${a.top_model.name}（${yuan(a.top_model.cost)}）` : '无'}`);
+  if (a.top_project) lines.push(`- 最费项目：${a.top_project.name}（${yuan(a.top_project.cost)}）`);
+  if (a.top_session) lines.push(`- 最费会话：${a.top_session.title || a.top_session.sessionId.slice(-12)}（${yuan(a.top_session.cost)}，${SOURCE_NAMES[a.top_session.source] || a.top_session.source}）`);
+  lines.push('');
+  lines.push('## 稳定性');
+  lines.push(`- 失败调用：${a.failed} 次（上期 ${b.failed} 次）`);
+  return { period: p, title, range_text: rangeText, markdown: lines.join('\n') };
+}
+
 module.exports = {
   getOverview, getTrend, getChannels, getModels, getPrices,
   getUsage, getUsageExport, getChannelList, getTools,
   getHeatmap, getLatency, getProjects, getBillMonths, getBill,
   getBudgetStatus, getHealth,
   getSessions, getSessionDetail, getErrors, getToolUsage,
+  getCacheStats, getWhatIf, getAnomalies, getDigest,
   computeRowCost, cachePricesFor,
   invalidate, warmup
 };

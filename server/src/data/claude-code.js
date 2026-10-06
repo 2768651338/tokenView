@@ -125,9 +125,14 @@ function objCwdProject(obj, meta) {
 
 const cache = { lastScan: 0, dir: null };
 
+/** 数据根目录（全文检索等扩展功能复用同一解析规则） */
+function getRootDir() {
+  return process.env.CLAUDE_PROJECTS_DIR ? path.resolve(process.env.CLAUDE_PROJECTS_DIR) : DEFAULT_DIR;
+}
+
 /** 确保缓存新鲜（TTL 内不重复扫描） */
 function ensureFresh() {
-  const dir = process.env.CLAUDE_PROJECTS_DIR ? path.resolve(process.env.CLAUDE_PROJECTS_DIR) : DEFAULT_DIR;
+  const dir = getRootDir();
   const now = Date.now();
   if (now - cache.lastScan < REFRESH_INTERVAL_MS && cache.dir === dir) return;
   source.refresh(dir);
@@ -142,4 +147,4 @@ function getRows(startMs = 0, endMs = Infinity) {
   return source.getRecords().filter((r) => r.createdAt >= startMs && r.createdAt <= end);
 }
 
-module.exports = { getRows, source: 'claude-code', inferChannel };
+module.exports = { getRows, getRootDir, collectJsonlFiles, source: 'claude-code', inferChannel };

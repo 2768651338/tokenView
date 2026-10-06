@@ -382,8 +382,46 @@ function getSessionMessages(sessionId, limit = 60) {
   }
 }
 
+/** LIKE 通配符转义（配合 ESCAPE '\' 使用） */
+function escapeLike(v) {
+  return String(v).replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+/**
+ * 全文检索原语：part 正文与 session 标题的 LIKE 匹配，返回原始行。
+ * 时间过滤、摘要在调用方（search.js）做；库缺失/表缺失时返回空结果不抛错。
+ */
+function searchRaw(rawQuery, limit = 2000) {
+  let parts = [];
+  let titles = [];
+  try {
+    ensureSynced();
+  } catch {
+    return { parts, titles };
+  }
+  const like = `%${escapeLike(rawQuery)}%`;
+  try {
+    parts = conn.db.prepare(`
+      SELECT m.session_id, m.data AS mdata, p.data AS pdata
+      FROM part p JOIN message m ON p.message_id = m.id
+      WHERE p.data LIKE ? ESCAPE '\\'
+      LIMIT ?
+    `).all(like, Math.min(Math.max(Number(limit) || 2000, 1), 5000));
+  } catch { /* message/part 表缺失（旧版 ZCode） */ }
+  try {
+    titles = conn.db.prepare(`
+      SELECT id, title, directory, time_updated
+      FROM session
+      WHERE title LIKE ? ESCAPE '\\'
+      LIMIT 200
+    `).all(like);
+  } catch { /* session 表缺失 */ }
+  return { parts, titles };
+}
+
 module.exports = {
   getRows, status, resolvePaths,
   getSessionExtras, getToolUsage, getSessionMessages,
+  searchRaw, escapeLike,
   source: 'zcode'
 };

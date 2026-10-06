@@ -1,7 +1,7 @@
 <template>
   <div class="panel">
     <div class="panel-title" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-      <span>消耗趋势</span>
+      <span>消耗趋势<span class="trend-hint">（点击图中某天可下钻到对应明细）</span></span>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <select class="trend-channel" :value="channel" title="按渠道筛选" @change="$emit('channel-change', $event.target.value)">
           <option value="">全部渠道</option>
@@ -36,9 +36,10 @@ const props = defineProps({
   trend: { type: Object, default: () => ({ list: [] }) },
   granularity: { type: String, default: 'day' },
   channel: { type: String, default: '' },
-  channelList: { type: Array, default: () => [] }
+  channelList: { type: Array, default: () => [] },
+  anomalies: { type: Object, default: () => ({}) }
 });
-defineEmits(['granularity-change', 'channel-change']);
+const emit = defineEmits(['granularity-change', 'channel-change', 'drill-down']);
 
 const granularities = [
   { value: 'day', label: '按日' },
@@ -143,7 +144,11 @@ function render() {
         itemStyle: { color: COLORS.prev }
       });
     }
-    legend = { show: true, top: 2, left: 4, icon: 'roundRect', itemWidth: 10, itemHeight: 6, textStyle: { color: '#9198a1', fontSize: 11 } };
+    legend = {
+      show: true, top: 2, left: 4, icon: 'roundRect', itemWidth: 10, itemHeight: 6,
+      textStyle: { color: '#9198a1', fontSize: 11 },
+      data: hasPrev ? ['输入', '缓存', '输出', '上期'] : ['输入', '缓存', '输出']
+    };
   } else {
     series = [singleSeries(list, metric.value, COLORS[metric.value], metrics.find((m) => m.value === metric.value).label)];
     if (hasPrev) {
@@ -157,10 +162,42 @@ function render() {
         itemStyle: { color: COLORS.prev }
       });
     }
-    legend = { show: hasPrev, top: 2, left: 4, icon: 'roundRect', itemWidth: 10, itemHeight: 6, textStyle: { color: '#9198a1', fontSize: 11 } };
+    legend = {
+      show: hasPrev, top: 2, left: 4, icon: 'roundRect', itemWidth: 10, itemHeight: 6,
+      textStyle: { color: '#9198a1', fontSize: 11 },
+      data: hasPrev ? [metrics.find((m) => m.value === metric.value).label, '上期'] : []
+    };
   }
+  // 异常锚点系列始终追加（不进图例，仅在 tooltip 中以红点说明）
+  series.push(anomalySeries);
 
   const fmt = (v) => fmtVal(metric.value, v);
+
+  // 异常日标记：以隐藏的「费用」系列为锚点挂 markPoint（与指标切换无关，位置恒定）
+  const anomalyList = (props.anomalies && props.anomalies.list) || [];
+  const flaggedSet = new Set(anomalyList.map((a) => a.label));
+  const costByLabel = new Map(list.map((d) => [d.label, Number(d.cost) || 0]));
+  const anomalyPoints = anomalyList
+    .filter((a) => costByLabel.has(a.label))
+    .map((a) => ({
+      coord: [a.label, costByLabel.get(a.label)],
+      value: a.cost
+    }));
+  const anomalySeries = {
+    name: '异常',
+    type: 'line',
+    data: list.map((d) => costByLabel.get(d.label)),
+    lineStyle: { opacity: 0 },
+    symbol: 'none',
+    silent: false,
+    markPoint: anomalyPoints.length ? {
+      symbol: 'circle',
+      symbolSize: 7,
+      itemStyle: { color: '#f85149', borderColor: '#161b22', borderWidth: 2 },
+      label: { show: false },
+      data: anomalyPoints
+    } : {}
+  };
 
   chart.setOption({
     backgroundColor: 'transparent',
@@ -172,14 +209,21 @@ function render() {
       textStyle: { color: '#e6edf3', fontSize: 12 },
       formatter: (params) => {
         if (!params || !params.length) return '';
-        const lines = [params[0].axisValue];
+        const visible = params.filter((p) => p.seriesName !== '异常');
+        if (!visible.length) return '';
+        const lines = [visible[0].axisValue];
+        // 异常日：在 tooltip 首行附加红点说明
+        if (flaggedSet.has(visible[0].axisValue)) {
+          const a = anomalyList.find((x) => x.label === visible[0].axisValue);
+          lines.push(`● 异常日：费用 ${fmtCost(a.cost)}，约为日均 ${a.deviation} 倍`);
+        }
         let total = 0;
-        for (const p of params) {
+        for (const p of visible) {
           if (p.value === null || p.value === undefined) continue;
           lines.push(`${p.marker}${p.seriesName}  ${fmt(p.value)}`);
           if (p.seriesName !== '上期') total += Number(p.value) || 0;
         }
-        if (params.length > 1) lines.push(`合计  ${fmt(total)}`);
+        if (visible.length > 1) lines.push(`合计  ${fmt(total)}`);
         return lines.join('<br/>');
       }
     },
@@ -211,6 +255,12 @@ function resize() { chart && chart.resize(); }
 
 onMounted(() => {
   chart = echarts.init(chartRef.value);
+  // 下钻：点击某个时间桶，把标签交给父级换算日期区间并跳转明细
+  chart.on('click', (params) => {
+    if (params && params.name && (props.trend.list || []).some((d) => d.label === params.name)) {
+      emit('drill-down', params.name);
+    }
+  });
   render();
   window.addEventListener('resize', resize);
 });
@@ -218,10 +268,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', resize);
   chart && chart.dispose();
 });
-watch(() => [props.trend, props.granularity, props.channel, metric.value], render, { deep: true });
+watch(() => [props.trend, props.granularity, props.channel, props.anomalies, metric.value], render, { deep: true });
 </script>
 
 <style scoped>
+.trend-hint { font-size: 10.5px; color: var(--text-faint); font-weight: 400; letter-spacing: 0; }
 .trend-channel {
   background: var(--bg-0);
   border: 1px solid var(--card-border);

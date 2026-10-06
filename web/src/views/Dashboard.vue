@@ -34,7 +34,8 @@
         <button class="refresh-btn" :disabled="loading" @click="refreshAll">
           {{ loading ? '刷新中...' : '⟳ 刷新' }}
         </button>
-        <button class="refresh-btn" title="设置（预算 / 汇率 / 数据源健康）" @click="showSettings = true">设置</button>
+        <button class="refresh-btn" title="生成日报 / 周报 / 月报（Markdown）" @click="openDigest">报告</button>
+        <button class="refresh-btn" title="设置（预算 / Webhook / 备份 / 数据源健康）" @click="showSettings = true">设置</button>
       </div>
     </header>
 
@@ -54,10 +55,18 @@
         :granularity="granularity"
         :channel="trendChannel"
         :channel-list="channelList"
+        :anomalies="anomalies"
         @granularity-change="setGranularity"
         @channel-change="setTrendChannel"
+        @drill-down="onDrillDown"
       />
       <ChannelPie :channels="channels" />
+    </div>
+
+    <!-- What-if 模拟 + 缓存命中率 -->
+    <div class="lower-grid">
+      <WhatIf :days="days" />
+      <CacheStats :days="days" />
     </div>
 
     <!-- 排行 + 模型 Top -->
@@ -96,7 +105,7 @@
     </div>
 
     <!-- 明细 -->
-    <div style="padding: 0 28px 24px;">
+    <div ref="usageSection" style="padding: 0 28px 24px;">
       <UsageTable
         :list="usage.list"
         :total="usage.total"
@@ -104,6 +113,8 @@
         :page-size="usage.pageSize"
         :channel-list="channelList"
         :source-options="sourceOptions"
+        :sync-start="usageFilter.start"
+        :sync-end="usageFilter.end"
         @page-change="setUsagePage"
         @filter-change="setUsageFilter"
         @refresh="loadUsage"
@@ -114,13 +125,38 @@
       TokenView · © 田小橙 QQ2768651338 · {{ refreshLabel }}
     </footer>
 
+    <!-- 报告弹窗（日报 / 周报 / 月报 Markdown） -->
+    <teleport to="body">
+      <div v-if="showDigest" class="dg-overlay" @click.self="showDigest = false">
+        <div class="dg-modal" role="dialog" aria-label="消耗报告">
+          <div class="dg-head">
+            <div class="seg">
+              <button
+                v-for="p in digestPeriods" :key="p.value"
+                :class="{ active: digestPeriod === p.value }"
+                @click="setDigestPeriod(p.value)"
+              >{{ p.label }}</button>
+            </div>
+            <span style="flex:1;"></span>
+            <button class="dg-btn" :disabled="digestLoading" @click="copyDigest">复制 Markdown</button>
+            <button class="dg-btn" :disabled="digestLoading" @click="downloadDigest">下载 .md</button>
+            <button class="dg-close" @click="showDigest = false">×</button>
+          </div>
+          <div class="dg-body">
+            <div v-if="digestLoading" style="text-align:center;color:var(--text-faint);padding:40px 0;">生成中...</div>
+            <pre v-else class="dg-pre">{{ digest ? digest.markdown : '' }}</pre>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
     <!-- 设置弹窗 -->
     <SettingsModal :visible="showSettings" @close="showSettings = false" @budget-changed="loadBudget" @data-changed="refreshAll" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
 import KpiCards from '../components/KpiCards.vue';
 import TrendChart from '../components/TrendChart.vue';
 import ChannelPie from '../components/ChannelPie.vue';
@@ -136,12 +172,15 @@ import BillPanel from '../components/BillPanel.vue';
 import SessionStats from '../components/SessionStats.vue';
 import ErrorStats from '../components/ErrorStats.vue';
 import ToolUsage from '../components/ToolUsage.vue';
+import WhatIf from '../components/WhatIf.vue';
+import CacheStats from '../components/CacheStats.vue';
 import SettingsModal from '../components/SettingsModal.vue';
 import {
   fetchOverview, fetchTrend, fetchChannels, fetchModels,
   fetchUsage, fetchChannelList, fetchPrices, fetchTools,
   fetchHeatmap, fetchLatency, fetchProjects, fetchBudget,
-  fetchSessions, fetchErrors, fetchToolUsage
+  fetchSessions, fetchErrors, fetchToolUsage,
+  fetchAnomalies, fetchDigest
 } from '../api';
 import { fmtCost } from '../utils/format';
 
@@ -166,6 +205,8 @@ const budget = ref(null);
 const sessions = ref({ list: [], total: 0 });
 const errors = ref({});
 const toolUsage = ref({ list: [] });
+const anomalies = ref({});
+const usageSection = ref(null);
 
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
 const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
@@ -277,6 +318,10 @@ async function loadErrors() {
 async function loadToolUsage() {
   toolUsage.value = await fetchToolUsage(days.value, 30);
 }
+// 异常检测用固定 90 天窗口：基线需要足够多的活跃日，与全局范围切换解耦
+async function loadAnomalies() {
+  anomalies.value = await fetchAnomalies(90);
+}
 async function loadBudget() {
   budget.value = await fetchBudget();
   maybeNotifyBudget();
@@ -301,7 +346,8 @@ async function refreshAll() {
     await Promise.all([
       loadOverview(), loadTrend(), loadChannels(), loadModels(),
       loadPrices(), loadTools(), loadHeatmap(), loadLatency(),
-      loadProjects(), loadBudget(), loadSessions(), loadErrors(), loadToolUsage()
+      loadProjects(), loadBudget(), loadSessions(), loadErrors(), loadToolUsage(),
+      loadAnomalies()
     ]);
   } catch (e) {
     console.error('数据加载失败:', e.message);
@@ -330,6 +376,93 @@ function setUsageFilter(f) {
   Object.assign(usageFilter, f);
   usage.page = 1;
   loadUsage();
+}
+
+/* ---- 趋势图下钻：把时间桶标签换算为日期区间并跳转到明细 ---- */
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+function drillRange(label) {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  if (granularity.value === 'month') {
+    const [y, m] = label.split('-').map(Number);
+    const end = new Date(y, m, 0); // 该月最后一天
+    if (end.getTime() > today.getTime()) end.setTime(today.getTime());
+    return { start: `${label}-01`, end: fmtDate(end) };
+  }
+  if (granularity.value === 'week') {
+    const start = new Date(`${label}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    if (end.getTime() > today.getTime()) end.setTime(today.getTime());
+    return { start: label, end: fmtDate(end) };
+  }
+  return { start: label, end: label };
+}
+
+function onDrillDown(label) {
+  const r = drillRange(label);
+  usageFilter.start = r.start;
+  usageFilter.end = r.end;
+  usage.page = 1;
+  loadUsage();
+  nextTick(() => {
+    if (usageSection.value) usageSection.value.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+/* ---- 报告弹窗（日报 / 周报 / 月报） ---- */
+const showDigest = ref(false);
+const digestLoading = ref(false);
+const digest = ref(null);
+const digestPeriod = ref('week');
+const digestPeriods = [
+  { value: 'day', label: '日报' },
+  { value: 'week', label: '周报' },
+  { value: 'month', label: '月报' }
+];
+
+async function setDigestPeriod(p) {
+  digestPeriod.value = p;
+  await loadDigest();
+}
+
+async function loadDigest() {
+  digestLoading.value = true;
+  try {
+    digest.value = await fetchDigest(digestPeriod.value);
+  } catch (e) {
+    console.error('报告生成失败:', e.message);
+    digest.value = null;
+  } finally {
+    digestLoading.value = false;
+  }
+}
+
+function openDigest() {
+  showDigest.value = true;
+  if (!digest.value || digest.value.period !== digestPeriod.value) loadDigest();
+}
+
+async function copyDigest() {
+  if (!digest.value) return;
+  try {
+    await navigator.clipboard.writeText(digest.value.markdown);
+  } catch { /* 剪贴板不可用时静默 */ }
+}
+
+function downloadDigest() {
+  if (!digest.value) return;
+  const blob = new Blob([digest.value.markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tokenview-${digest.value.period}-${new Date().toISOString().slice(0, 10)}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /* ---- 预算告警：横幅文案 + 桌面通知（每等级每天最多提醒一次） ---- */
@@ -423,5 +556,67 @@ onBeforeUnmount(() => {
 .hm-grid { grid-template-columns: 1.5fr 1fr; }
 @media (max-width: 1400px) {
   .hm-grid { grid-template-columns: 1fr; }
+}
+
+/* 报告弹窗：与设置弹窗同风格（扁平边框，无阴影无渐变） */
+.dg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 4, 9, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.dg-modal {
+  width: 720px;
+  max-width: calc(100vw - 40px);
+  height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+}
+.dg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.dg-btn {
+  border: 1px solid var(--card-border);
+  background: var(--bg-0);
+  color: var(--text-main);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dg-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.dg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dg-close {
+  border: none;
+  background: transparent;
+  color: var(--text-sub);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.dg-close:hover { color: var(--text-main); background: var(--border-subtle); }
+.dg-body { flex: 1; overflow-y: auto; padding: 14px 18px; }
+.dg-pre {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text-main);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
