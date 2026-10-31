@@ -1,7 +1,7 @@
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
-const config = require('./config');
+require('./config');
 const runtime = require('./runtime');
 const { createApp } = require('./app');
 
@@ -47,8 +47,8 @@ runtime.setupFileLogging(dataPath, process.argv.slice(2));
   const { app, webDist } = createApp();
 
   // 端口冲突自动递增探测
-  function listen(p, maxTries = 11) {
-    const server = app.listen(p, () => {
+  function listen(p, remainingTries = 11) {
+    const server = app.listen(p, '127.0.0.1', () => {
       const addr = `http://localhost:${p}`;
       console.log(`🚀 TokenView 已启动: ${addr}`);
       console.log(`   数据目录: ${dataPath}`);
@@ -59,10 +59,10 @@ runtime.setupFileLogging(dataPath, process.argv.slice(2));
       }
     });
     server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE' && p < config.port + maxTries) {
+      if (err.code === 'EADDRINUSE' && p < 65535 && remainingTries > 1) {
         console.warn(`   端口 ${p} 被占用，尝试 ${p + 1} ...`);
         server.close();
-        listen(p + 1, maxTries);
+        listen(p + 1, remainingTries - 1);
       } else {
         console.error('❌ 启动失败:', err.message);
         process.exit(1);

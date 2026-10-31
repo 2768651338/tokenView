@@ -1,10 +1,10 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="sm-overlay" @click.self="close" @keydown.esc="close">
-      <div class="sm-modal" role="dialog" aria-label="设置">
+    <div v-if="visible" class="sm-overlay" @click.self="close">
+      <div ref="settingsDialog" class="sm-modal" role="dialog" aria-modal="true" aria-label="设置" tabindex="-1">
         <div class="sm-head">
           <span>设置</span>
-          <button class="sm-close" @click="close">×</button>
+          <button class="sm-close" aria-label="关闭设置" @click="close">×</button>
         </div>
 
         <div class="sm-body">
@@ -258,11 +258,14 @@
           <!-- 桌面端选项 -->
           <section v-if="trayAvailable || autoLaunchAvailable" class="sm-sec">
             <div class="sm-sec-title">桌面端</div>
-            <div class="sm-row">
+            <div v-if="desktopLoading" class="sm-note">正在读取桌面设置...</div>
+            <div v-if="desktopError" class="sm-error" role="alert">{{ desktopError }}</div>
+            <div v-if="trayAvailable" class="sm-row">
               <label class="sm-check">
                 <input
                   type="checkbox"
                   :checked="closeToTray"
+                  :disabled="desktopLoading || desktopSaving"
                   @change="setCloseToTray($event.target.checked)"
                 />
                 关闭窗口时最小化到系统托盘（不勾选则保持原有行为：关闭即退出）
@@ -273,6 +276,7 @@
                 <input
                   type="checkbox"
                   :checked="autoLaunch"
+                  :disabled="desktopLoading || desktopSaving"
                   @change="setAutoLaunch($event.target.checked)"
                 />
                 开机自启（随系统启动并静默最小化到托盘，不弹出窗口）
@@ -287,6 +291,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue';
+import { useDialog } from '../composables/useDialog';
 import {
   fetchBudget, saveBudget, fetchHealth, fetchSettings, saveFxRate, saveZcodeDir,
   saveWebhookSettings, testWebhook, saveSubscriptionChannels, saveRetentionSettings,
@@ -299,6 +304,8 @@ const props = defineProps({
   visible: { type: Boolean, default: false }
 });
 const emit = defineEmits(['close', 'budget-changed', 'data-changed']);
+const settingsDialog = ref(null);
+useDialog(() => props.visible, settingsDialog, close);
 
 const form = reactive({ enabled: false, daily: 0, monthly: 0 });
 const status = reactive({ today_cost: 0, month_cost: 0, daily_ratio: 0, monthly_ratio: 0 });
@@ -321,10 +328,34 @@ const pickAvailable = !!(typeof window !== 'undefined' && window.tokenview && wi
 const health = ref([]);
 
 const trayAvailable = !!(typeof window !== 'undefined' && window.tokenview && window.tokenview.setCloseToTray);
-const closeToTray = ref(trayAvailable ? !!window.tokenview.getCloseToTray() : false);
+const closeToTray = ref(false);
 
 const autoLaunchAvailable = !!(typeof window !== 'undefined' && window.tokenview && window.tokenview.setAutoLaunch);
-const autoLaunch = ref(autoLaunchAvailable ? !!window.tokenview.getAutoLaunch() : false);
+const autoLaunch = ref(false);
+const desktopLoading = ref(false);
+const desktopSaving = ref(false);
+const desktopError = ref('');
+let desktopRequest = 0;
+
+async function loadDesktopSettings() {
+  if (!trayAvailable && !autoLaunchAvailable) return;
+  const request = ++desktopRequest;
+  desktopLoading.value = true;
+  desktopError.value = '';
+  try {
+    const [tray, launch] = await Promise.all([
+      trayAvailable ? window.tokenview.getCloseToTray() : false,
+      autoLaunchAvailable ? window.tokenview.getAutoLaunch() : false
+    ]);
+    if (request !== desktopRequest) return;
+    closeToTray.value = !!tray;
+    autoLaunch.value = !!launch;
+  } catch (e) {
+    if (request === desktopRequest) desktopError.value = e.message || '桌面设置读取失败，请重新打开设置重试';
+  } finally {
+    if (request === desktopRequest) desktopLoading.value = false;
+  }
+}
 
 /* ---- Webhook 告警推送 ---- */
 const webhook = reactive({ enabled: false, url: '', type: 'dingtalk', env_locked: false });
@@ -380,6 +411,7 @@ async function persistSubs(next, note) {
   try {
     subs.value = await saveSubscriptionChannels(next);
     subMessage.value = note || '已保存';
+    emit('data-changed');
   } catch (e) {
     subMessage.value = e.message || '保存失败';
   }
@@ -435,6 +467,7 @@ async function saveRetention() {
       retentionMessage.value += `；裁剪失败：${r.apply_error}`;
       retentionFail.value = true;
     }
+    emit('data-changed');
   } catch (e) {
     retentionMessage.value = e.message || '保存失败';
     retentionFail.value = true;
@@ -516,6 +549,7 @@ async function sendTest() {
       request_id: `tokenview-test-${Date.now()}`
     });
     testMessage.value = `上报成功：${r.total_tokens} tokens，估算费用 ${fmtCost(r.cost)}（request_id ${r.request_id}）`;
+    emit('data-changed');
   } catch (e) {
     testMessage.value = e.message || '上报失败';
     testFail.value = true;
@@ -586,7 +620,7 @@ async function doImportBackup() {
   try {
     const r = await importBackup(JSON.stringify(pendingImport.value.bundle));
     const skippedNote = r.skipped.length ? `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => s.name).join('、')}）` : '';
-    backupMessage.value = `${r.message}${skippedNote}；数据已即时生效`;
+    backupMessage.value = `已导入 ${r.imported.length} 个文件${skippedNote}；数据已即时生效`;
     pendingImport.value = null;
     emit('data-changed');
   } catch (e) {
@@ -598,10 +632,20 @@ async function doImportBackup() {
 }
 
 /* ---- 桌面端开机自启 ---- */
-function setAutoLaunch(v) {
+async function setAutoLaunch(v) {
+  if (!autoLaunchAvailable || desktopLoading.value || desktopSaving.value) return;
+  const previous = autoLaunch.value;
   autoLaunch.value = !!v;
-  if (autoLaunchAvailable) {
-    try { window.tokenview.setAutoLaunch(!!v); } catch { /* IPC 不可用时忽略 */ }
+  desktopSaving.value = true;
+  desktopError.value = '';
+  try {
+    autoLaunch.value = !!(await window.tokenview.setAutoLaunch(!!v));
+    if (autoLaunch.value !== !!v) desktopError.value = '系统未能更改开机自启，已显示实际状态';
+  } catch (e) {
+    autoLaunch.value = previous;
+    desktopError.value = e.message || '开机自启设置失败';
+  } finally {
+    desktopSaving.value = false;
   }
 }
 
@@ -705,6 +749,7 @@ async function saveFx() {
     } else {
       fxMessage.value = r.reconverted ? `已保存，并按新汇率重算 ${r.reconverted} 条在线价目` : '已保存（当前无在线价目快照）';
     }
+    emit('data-changed');
   } catch (e) {
     fxMessage.value = e.message || '保存失败';
   } finally {
@@ -722,6 +767,7 @@ async function clearFx() {
     fxSourceText.value = s.fx_rate ? '当前为手动覆盖' : '未覆盖（环境变量或默认值）';
     fxInput.value = '';
     fxMessage.value = r.reconvert_error ? `已清除覆盖，但重算失败：${r.reconvert_error}` : '已清除覆盖并按默认/环境变量汇率重算';
+    emit('data-changed');
   } catch (e) {
     fxMessage.value = e.message || '操作失败';
   } finally {
@@ -729,9 +775,21 @@ async function clearFx() {
   }
 }
 
-function setCloseToTray(v) {
+async function setCloseToTray(v) {
+  if (!trayAvailable || desktopLoading.value || desktopSaving.value) return;
+  const previous = closeToTray.value;
   closeToTray.value = !!v;
-  if (trayAvailable) window.tokenview.setCloseToTray(!!v);
+  desktopSaving.value = true;
+  desktopError.value = '';
+  try {
+    closeToTray.value = !!(await window.tokenview.setCloseToTray(!!v));
+    if (closeToTray.value !== !!v) desktopError.value = '未能更改关闭到托盘，已显示实际状态';
+  } catch (e) {
+    closeToTray.value = previous;
+    desktopError.value = e.message || '关闭到托盘设置失败';
+  } finally {
+    desktopSaving.value = false;
+  }
 }
 
 /* ---- ZCode 数据位置 ---- */
@@ -799,7 +857,13 @@ function close() {
 }
 
 watch(() => props.visible, (v) => {
-  if (v) loadAll();
+  if (v) {
+    loadAll();
+    loadDesktopSettings();
+  } else {
+    desktopRequest++;
+    desktopLoading.value = false;
+  }
 });
 </script>
 
@@ -876,7 +940,11 @@ watch(() => props.visible, (v) => {
   outline: none;
   font-family: inherit;
 }
-.sm-input:focus { border-color: var(--accent); }
+.sm-input:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(47, 129, 247, 0.28),
+              0 0 0 3px rgba(47, 129, 247, 0.16);
+}
 .sm-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .sm-btn {
   border: 1px solid var(--card-border);

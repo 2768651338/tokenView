@@ -39,6 +39,11 @@
       </div>
     </header>
 
+    <div v-if="dataError || usageError" class="data-error" role="alert">
+      <span>{{ [dataError, usageError].filter(Boolean).join('；') }}。请检查连接后重试。</span>
+      <button class="refresh-btn" :disabled="loading" @click="retryData">重试加载</button>
+    </div>
+
     <!-- 预算告警横幅 -->
     <div v-if="budget && budget.level && budget.level !== 'none'" class="budget-banner" :class="budget.level">
       <template v-if="budgetBannerText">{{ budgetBannerText }}</template>
@@ -65,8 +70,8 @@
 
     <!-- What-if 模拟 + 缓存命中率 -->
     <div class="lower-grid">
-      <WhatIf :days="days" />
-      <CacheStats :days="days" />
+      <WhatIf ref="whatIfPanel" :days="days" />
+      <CacheStats ref="cachePanel" :days="days" />
     </div>
 
     <!-- 排行 + 模型 Top -->
@@ -83,7 +88,7 @@
 
     <!-- 会话统计（宽表：会话/项目/子代理/上下文/增删 + 详情） -->
     <div style="padding: 0 28px 20px;">
-      <SessionStats :list="sessions.list" :total="sessions.total" :days="days" />
+      <SessionStats :list="sessions.list" :total="sessions.total_sessions" :days="days" />
     </div>
 
     <!-- 错误与中断 + 工具调用分析 -->
@@ -95,13 +100,13 @@
     <!-- 项目消耗 + 月度账单 -->
     <div class="lower-grid">
       <ProjectStats :list="projects" />
-      <BillPanel />
+      <BillPanel ref="billPanel" />
     </div>
 
     <!-- 工具统计 + 模型市场价参考（两列紧凑并排） -->
     <div class="lower-grid">
       <ToolStats :tools="tools" />
-      <PriceTable :data="prices" @refresh="loadPrices" />
+      <PriceTable :data="prices" @refresh="refreshAll" />
     </div>
 
     <!-- 明细 -->
@@ -128,7 +133,7 @@
     <!-- 报告弹窗（日报 / 周报 / 月报 Markdown） -->
     <teleport to="body">
       <div v-if="showDigest" class="dg-overlay" @click.self="showDigest = false">
-        <div class="dg-modal" role="dialog" aria-label="消耗报告">
+        <div ref="digestDialog" class="dg-modal" role="dialog" aria-modal="true" aria-label="消耗报告" tabindex="-1">
           <div class="dg-head">
             <div class="seg">
               <button
@@ -138,12 +143,15 @@
               >{{ p.label }}</button>
             </div>
             <span style="flex:1;"></span>
-            <button class="dg-btn" :disabled="digestLoading" @click="copyDigest">复制 Markdown</button>
-            <button class="dg-btn" :disabled="digestLoading" @click="downloadDigest">下载 .md</button>
-            <button class="dg-close" @click="showDigest = false">×</button>
+            <button class="dg-btn" :disabled="digestLoading || !digest" @click="copyDigest">复制 Markdown</button>
+            <button class="dg-btn" :disabled="digestLoading || !digest" @click="downloadDigest">下载 .md</button>
+            <button class="dg-close" aria-label="关闭消耗报告" @click="showDigest = false">×</button>
           </div>
           <div class="dg-body">
             <div v-if="digestLoading" style="text-align:center;color:var(--text-faint);padding:40px 0;">生成中...</div>
+            <div v-else-if="digestError" role="alert" style="color:var(--red);padding:24px 0;">
+              报告生成失败：{{ digestError }} <button class="dg-btn" @click="loadDigest">重试生成</button>
+            </div>
             <pre v-else class="dg-pre">{{ digest ? digest.markdown : '' }}</pre>
           </div>
         </div>
@@ -151,12 +159,13 @@
     </teleport>
 
     <!-- 设置弹窗 -->
-    <SettingsModal :visible="showSettings" @close="showSettings = false" @budget-changed="loadBudget" @data-changed="refreshAll" />
+    <SettingsModal :visible="showSettings" @close="showSettings = false" @budget-changed="loadBudget" @data-changed="onDataChanged" />
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref } from 'vue';
+import { useDialog } from '../composables/useDialog';
 import KpiCards from '../components/KpiCards.vue';
 import TrendChart from '../components/TrendChart.vue';
 import ChannelPie from '../components/ChannelPie.vue';
@@ -189,6 +198,8 @@ const days = ref(7);
 const granularity = ref('day');
 const trendChannel = ref('');
 const loading = ref(false);
+const dataError = ref('');
+const usageError = ref('');
 const showSettings = ref(false);
 
 const overview = ref({});
@@ -202,11 +213,14 @@ const heatmap = ref({ list: [], max_tokens: 0, max_calls: 0 });
 const latency = ref({ overall: null, channels: [], ttft: { overall: null, channels: [] } });
 const projects = ref([]);
 const budget = ref(null);
-const sessions = ref({ list: [], total: 0 });
+const sessions = ref({ list: [], total_sessions: 0 });
 const errors = ref({});
 const toolUsage = ref({ list: [] });
 const anomalies = ref({});
 const usageSection = ref(null);
+const whatIfPanel = ref(null);
+const cachePanel = ref(null);
+const billPanel = ref(null);
 
 const usage = reactive({ list: [], total: 0, page: 1, pageSize: 20 });
 const usageFilter = reactive({ channel: '', source: '', status: '', start: '', end: '' });
@@ -327,13 +341,18 @@ async function loadBudget() {
   maybeNotifyBudget();
 }
 async function loadUsage() {
-  const data = await fetchUsage({
-    page: usage.page,
-    pageSize: usage.pageSize,
-    ...usageFilter
-  });
-  usage.list = data.list;
-  usage.total = data.total;
+  usageError.value = '';
+  try {
+    const data = await fetchUsage({
+      page: usage.page,
+      pageSize: usage.pageSize,
+      ...usageFilter
+    });
+    usage.list = data.list;
+    usage.total = data.total;
+  } catch (e) {
+    usageError.value = `调用明细加载失败：${errorMessage(e)}`;
+  }
 }
 
 async function loadChannelList() {
@@ -342,18 +361,35 @@ async function loadChannelList() {
 
 async function refreshAll() {
   loading.value = true;
+  dataError.value = '';
   try {
-    await Promise.all([
+    const results = await Promise.allSettled([
       loadOverview(), loadTrend(), loadChannels(), loadModels(),
       loadPrices(), loadTools(), loadHeatmap(), loadLatency(),
       loadProjects(), loadBudget(), loadSessions(), loadErrors(), loadToolUsage(),
-      loadAnomalies()
+      loadAnomalies(), loadChannelList(), loadUsage(),
+      whatIfPanel.value?.refresh(), cachePanel.value?.refresh(), billPanel.value?.refresh()
     ]);
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) dataError.value = `数据刷新失败：${[...new Set(failures.map(result => errorMessage(result.reason)))].join('；')}`;
   } catch (e) {
-    console.error('数据加载失败:', e.message);
+    dataError.value = `数据刷新失败：${errorMessage(e)}`;
   } finally {
     loading.value = false;
   }
+}
+
+function errorMessage(error) {
+  return error?.message === 'Network Error' ? '网络连接失败' : error?.message || '请求失败';
+}
+
+function retryData() {
+  refreshAll();
+}
+
+function onDataChanged() {
+  usage.page = 1;
+  refreshAll();
 }
 
 function setDays(d) {
@@ -408,13 +444,19 @@ function onDrillDown(label) {
   usage.page = 1;
   loadUsage();
   nextTick(() => {
-    if (usageSection.value) usageSection.value.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (usageSection.value) usageSection.value.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'
+    });
   });
 }
 
 /* ---- 报告弹窗（日报 / 周报 / 月报） ---- */
 const showDigest = ref(false);
+const digestDialog = ref(null);
+useDialog(() => showDigest.value, digestDialog, () => { showDigest.value = false; });
 const digestLoading = ref(false);
+const digestError = ref('');
+let digestRequest = 0;
 const digest = ref(null);
 const digestPeriod = ref('week');
 const digestPeriods = [
@@ -429,14 +471,17 @@ async function setDigestPeriod(p) {
 }
 
 async function loadDigest() {
+  const request = ++digestRequest;
   digestLoading.value = true;
+  digestError.value = '';
+  digest.value = null;
   try {
-    digest.value = await fetchDigest(digestPeriod.value);
+    const result = await fetchDigest(digestPeriod.value);
+    if (request === digestRequest && showDigest.value) digest.value = result;
   } catch (e) {
-    console.error('报告生成失败:', e.message);
-    digest.value = null;
+    if (request === digestRequest) digestError.value = errorMessage(e);
   } finally {
-    digestLoading.value = false;
+    if (request === digestRequest) digestLoading.value = false;
   }
 }
 
@@ -496,8 +541,6 @@ function maybeNotifyBudget() {
 
 onMounted(() => {
   refreshAll();
-  loadUsage();
-  loadChannelList();
   restartTimer();
 });
 onBeforeUnmount(() => {
@@ -506,6 +549,18 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.data-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 24px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  color: var(--red);
+  font-size: 12.5px;
+}
 .refresh-btn {
   border: 1px solid var(--card-border);
   background: var(--card-bg);
@@ -618,5 +673,8 @@ onBeforeUnmount(() => {
   font-family: 'Cascadia Code', Consolas, monospace;
   white-space: pre-wrap;
   word-break: break-word;
+}
+@media (max-width: 600px) {
+  .dg-head { flex-wrap: wrap; }
 }
 </style>

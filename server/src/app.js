@@ -17,6 +17,8 @@ const webhook = require('./data/webhook');
  */
 function createApp(options = {}) {
   const app = express();
+  // 备份先使用独立限额解析，避免被普通 API 的 1MB 限额提前拒绝。
+  app.use('/api/stats/backup/import', express.json({ limit: '210mb' }));
   app.use(express.json({ limit: '1mb' }));
 
   // 路由挂载
@@ -51,10 +53,17 @@ function createApp(options = {}) {
   }
 
   if (webDist) {
-    app.use(express.static(webDist, { maxAge: '1h' }));
+    app.use(express.static(webDist, {
+      maxAge: '1h',
+      setHeaders(res, filePath) {
+        if (path.extname(filePath).toLowerCase() === '.html') res.setHeader('Cache-Control', 'no-store');
+      }
+    }));
+    app.use('/assets', (req, res) => res.status(404).type('text').send('资源不存在'));
     // SPA fallback（非 /api 路径回 index.html）
     app.use((req, res, next) => {
       if (req.path.startsWith('/api/')) return next();
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(path.join(webDist, 'index.html'));
     });
   }
@@ -67,6 +76,12 @@ function createApp(options = {}) {
   // 统一错误兜底
   app.use((err, req, res, next) => {
     console.error('[server error]', err.message);
+    if (err.type === 'entity.parse.failed') {
+      return res.status(400).json({ code: 400, message: '请求正文不是有效的 JSON' });
+    }
+    if (err.type === 'entity.too.large') {
+      return res.status(413).json({ code: 413, message: '请求正文超过大小限制' });
+    }
     res.status(500).json({ code: 500, message: '服务器内部错误' });
   });
 

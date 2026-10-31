@@ -8,6 +8,7 @@
       </select>
     </div>
 
+    <div v-if="loadError" role="alert" style="color:var(--red);font-size:12px;margin-bottom:8px;">加载失败：{{ loadError }}，请刷新重试。</div>
     <div v-if="!data || !data.models || !data.models.length" class="wif-empty">
       所选范围内暂无数据
     </div>
@@ -62,7 +63,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { fetchWhatIf } from '../api';
 import { fmtCost, fmtNum, fmtTokens } from '../utils/format';
 
@@ -72,6 +73,8 @@ const props = defineProps({
 
 const data = ref(null);
 const targetModel = ref('');
+const loadError = ref('');
+let loadRequest = 0;
 const models = computed(() => (data.value && data.value.models) || []);
 
 const deltaColor = computed(() => {
@@ -81,18 +84,26 @@ const deltaColor = computed(() => {
 });
 
 async function load() {
+  const request = ++loadRequest;
+  loadError.value = '';
   try {
-    data.value = await fetchWhatIf(props.days, targetModel.value);
+    const result = await fetchWhatIf(props.days, targetModel.value);
+    if (request !== loadRequest) return;
+    data.value = result;
     // 当前选中的模型不在列表里时（切换时间范围）重置，避免悬挂无效选项
     if (targetModel.value && !models.value.some((m) => m.model === targetModel.value)) {
       targetModel.value = '';
     }
-  } catch { /* 面板静默：下次刷新重试 */ }
+  } catch (e) {
+    if (request === loadRequest) loadError.value = e.message || '请求失败';
+  }
 }
 
 watch(() => props.days, () => { targetModel.value = ''; load(); });
 watch(targetModel, load);
 load();
+defineExpose({ refresh: load });
+onBeforeUnmount(() => { loadRequest++; });
 </script>
 
 <style scoped>

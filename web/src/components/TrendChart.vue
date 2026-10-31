@@ -75,7 +75,7 @@ function singleSeries(list, key, color, name) {
     smooth: 0.3,
     symbol: 'circle',
     symbolSize: 4,
-    showSymbol: false,
+    showSymbol: list.length === 1,
     lineStyle: { width: 2, color },
     itemStyle: { color, borderColor: '#161b22', borderWidth: 2 },
     areaStyle: { color: color + '1a' },
@@ -83,10 +83,10 @@ function singleSeries(list, key, color, name) {
       silent: true,
       symbol: 'none',
       lineStyle: { color: '#6e7681', type: 'dashed' },
-      label: { color: '#6e7681', fontSize: 10 },
+      label: { color: '#6e7681', fontSize: 10, position: 'insideEndTop' },
       data: [{
         type: 'average',
-        label: { formatter: ({ value }) => '日均 ' + fmtVal(key, value), color: '#9198a1' }
+        label: { formatter: ({ value }) => '平均 ' + fmtVal(key, value), color: '#9198a1' }
       }]
     }
   };
@@ -120,6 +120,8 @@ function render() {
       { key: 'cache_tokens', name: '缓存', color: COLORS.cache },
       { key: 'completion_tokens', name: '输出', color: COLORS.completion }
     ];
+    const unknownTokens = list.map(d => Math.max(0, (Number(d.tokens) || 0)
+      - (Number(d.prompt_tokens) || 0) - (Number(d.cache_tokens) || 0) - (Number(d.completion_tokens) || 0)));
     series = defs.map((d) => ({
       name: d.name,
       type: 'line',
@@ -128,11 +130,18 @@ function render() {
       smooth: 0.3,
       symbol: 'circle',
       symbolSize: 4,
-      showSymbol: false,
+      showSymbol: list.length === 1,
       lineStyle: { width: 1, color: d.color },
       itemStyle: { color: d.color },
       areaStyle: { color: d.color + '33' }
     }));
+    if (unknownTokens.some(value => value > 0)) {
+      defs.push({ name: '未拆分' });
+      series.push({ name: '未拆分', type: 'line', stack: 'tokens', data: unknownTokens,
+        symbol: 'circle', symbolSize: 4, showSymbol: list.length === 1,
+        lineStyle: { width: 1, color: '#9198a1' }, itemStyle: { color: '#9198a1' },
+        areaStyle: { color: '#9198a133' } });
+    }
     if (hasPrev) {
       series.push({
         name: '上期',
@@ -147,7 +156,7 @@ function render() {
     legend = {
       show: true, top: 2, left: 4, icon: 'roundRect', itemWidth: 10, itemHeight: 6,
       textStyle: { color: '#9198a1', fontSize: 11 },
-      data: hasPrev ? ['输入', '缓存', '输出', '上期'] : ['输入', '缓存', '输出']
+      data: [...defs.map(d => d.name), ...(hasPrev ? ['上期'] : [])]
     };
   } else {
     series = [singleSeries(list, metric.value, COLORS[metric.value], metrics.find((m) => m.value === metric.value).label)];
@@ -168,25 +177,22 @@ function render() {
       data: hasPrev ? [metrics.find((m) => m.value === metric.value).label, '上期'] : []
     };
   }
-  // 异常锚点系列始终追加（不进图例，仅在 tooltip 中以红点说明）
-  series.push(anomalySeries);
-
   const fmt = (v) => fmtVal(metric.value, v);
 
-  // 异常日标记：以隐藏的「费用」系列为锚点挂 markPoint（与指标切换无关，位置恒定）
+  // 异常锚点沿当前指标放置；不能把费用值混入 Tokens / 调用坐标轴。
   const anomalyList = (props.anomalies && props.anomalies.list) || [];
   const flaggedSet = new Set(anomalyList.map((a) => a.label));
-  const costByLabel = new Map(list.map((d) => [d.label, Number(d.cost) || 0]));
+  const valueByLabel = new Map(list.map((d) => [d.label, Number(d[metric.value]) || 0]));
   const anomalyPoints = anomalyList
-    .filter((a) => costByLabel.has(a.label))
+    .filter((a) => valueByLabel.has(a.label))
     .map((a) => ({
-      coord: [a.label, costByLabel.get(a.label)],
+      coord: [a.label, valueByLabel.get(a.label)],
       value: a.cost
     }));
   const anomalySeries = {
     name: '异常',
     type: 'line',
-    data: list.map((d) => costByLabel.get(d.label)),
+    data: list.map((d) => valueByLabel.get(d.label)),
     lineStyle: { opacity: 0 },
     symbol: 'none',
     silent: false,
@@ -198,8 +204,11 @@ function render() {
       data: anomalyPoints
     } : {}
   };
+  // 异常锚点系列始终追加（不进图例，仅在 tooltip 中以红点说明）
+  series.push(anomalySeries);
 
   chart.setOption({
+    animation: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     backgroundColor: 'transparent',
     legend,
     tooltip: {
@@ -227,11 +236,11 @@ function render() {
         return lines.join('<br/>');
       }
     },
-    grid: { left: 12, right: 16, top: 36, bottom: 8, containLabel: true },
+    grid: { left: 12, right: 48, top: 36, bottom: 8, containLabel: true },
     xAxis: {
       type: 'category',
       data: labels,
-      boundaryGap: false,
+      boundaryGap: labels.length === 1,
       axisLine: { lineStyle: { color: '#30363d' } },
       axisLabel: { color: '#9198a1', fontSize: 11, interval: 'auto' },
       axisTick: { show: false }
@@ -256,10 +265,12 @@ function resize() { chart && chart.resize(); }
 onMounted(() => {
   chart = echarts.init(chartRef.value);
   // 下钻：点击某个时间桶，把标签交给父级换算日期区间并跳转明细
-  chart.on('click', (params) => {
-    if (params && params.name && (props.trend.list || []).some((d) => d.label === params.name)) {
-      emit('drill-down', params.name);
-    }
+  chart.getZr().on('click', (event) => {
+    const point = [event.offsetX, event.offsetY];
+    if (!chart.containPixel({ gridIndex: 0 }, point)) return;
+    const index = Math.round(chart.convertFromPixel({ xAxisIndex: 0 }, event.offsetX));
+    const bucket = (props.trend.list || [])[index];
+    if (bucket) emit('drill-down', bucket.label);
   });
   render();
   window.addEventListener('resize', resize);

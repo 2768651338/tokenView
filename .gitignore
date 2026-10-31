@@ -12,6 +12,7 @@ desktop/release/
 
 # 运行时上报数据
 server/data/
+.playwright-cli/
 
 # 日志
 *.log

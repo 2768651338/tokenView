@@ -17,6 +17,7 @@ let closeToTrayEnabled = false; // 设置页开关（经 preload IPC 同步）�
 let quitting = false;           // before-quit 置位：区分"用户点关闭"与"真正退出"
 let trayNoticeShown = false;    // 首次最小化到托盘时提示一次
 let startHidden = false;        // 开机自启带 --hidden 启动：就绪后不弹窗，静默驻留托盘
+const LOGIN_ITEM_OPTIONS = { path: process.execPath, args: ['--hidden'] };
 
 /** 解析端口：--port 参数 / TOKENVIEW_PORT 环境变量；缺省 0 = 系统分配随机空闲端口 */
 function resolvePort() {
@@ -26,6 +27,14 @@ function resolvePort() {
   const env = Number(process.env.TOKENVIEW_PORT);
   if (Number.isInteger(env) && env > 0 && env < 65536) return env;
   return 0;
+}
+
+/** 解析数据目录：--data-dir 参数 > TOKENVIEW_DATA_DIR 环境变量；缺省交给内嵌服务按用户目录处理 */
+function resolveDataDir() {
+  const argv = process.argv.slice(1);
+  const i = argv.indexOf('--data-dir');
+  if (i >= 0 && argv[i + 1]) return argv[i + 1];
+  return process.env.TOKENVIEW_DATA_DIR || undefined;
 }
 
 /** --hidden：随系统自启时静默启动（手动双击 exe 不带该参数，照常弹窗） */
@@ -152,7 +161,8 @@ function createWindow(url) {
     }
   });
   mainWindow.on('closed', () => { mainWindow = null; });
-  mainWindow.loadURL(url);
+  // 升级后首次启动也避开旧版本曾缓存一小时的 HTML 入口。
+  mainWindow.loadURL(`${url}/?v=${encodeURIComponent(app.getVersion())}`);
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -170,6 +180,7 @@ if (!gotLock) {
       const { startServer } = require('./server.cjs');
       serverHandle = await startServer({
         port: resolvePort(),
+        dataDir: resolveDataDir(),
         webDist: resolveWebDist(),
         fileLog: true // 打包后无控制台，日志落 %LOCALAPPDATA%\TokenView\logs
       });
@@ -192,14 +203,14 @@ if (!gotLock) {
   });
 
   // 设置页的"开机自启"开关：注册启动项并带 --hidden，自启时静默驻留托盘
-  ipcMain.handle('tokenview:get-auto-launch', () => app.getLoginItemSettings().openAtLogin);
+  ipcMain.handle('tokenview:get-auto-launch', () => app.getLoginItemSettings(LOGIN_ITEM_OPTIONS).openAtLogin);
   ipcMain.handle('tokenview:set-auto-launch', (_e, v) => {
     try {
-      app.setLoginItemSettings({ openAtLogin: !!v, args: ['--hidden'] });
-      return app.getLoginItemSettings().openAtLogin === !!v ? !!v : app.getLoginItemSettings().openAtLogin;
+      app.setLoginItemSettings({ ...LOGIN_ITEM_OPTIONS, openAtLogin: !!v });
+      return app.getLoginItemSettings(LOGIN_ITEM_OPTIONS).openAtLogin;
     } catch (e) {
       console.warn('[TokenView] 设置开机自启失败:', e.message);
-      return app.getLoginItemSettings().openAtLogin;
+      return app.getLoginItemSettings(LOGIN_ITEM_OPTIONS).openAtLogin;
     }
   });
 

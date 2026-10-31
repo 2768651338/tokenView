@@ -10,7 +10,11 @@ http.interceptors.response.use(
     if (res.data && res.data.code === 0) return res.data.data;
     return Promise.reject(new Error((res.data && res.data.message) || '接口错误'));
   },
-  (err) => Promise.reject(err)
+  (err) => {
+    const message = err.response && err.response.data && err.response.data.message;
+    if (typeof message === 'string' && message) err.message = message;
+    return Promise.reject(err);
+  }
 );
 
 /** 核心 KPI 汇总 */

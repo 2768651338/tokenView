@@ -122,11 +122,11 @@
 
     <!-- 会话详情弹窗 -->
     <teleport to="body">
-      <div v-if="detail" class="sd-overlay" @click.self="closeDetail" @keydown.esc="closeDetail">
-        <div class="sd-modal" role="dialog" aria-label="会话详情">
+      <div v-if="detail" class="sd-overlay" @click.self="closeDetail">
+        <div ref="detailDialog" class="sd-modal" role="dialog" aria-modal="true" aria-label="会话详情" tabindex="-1">
           <div class="sd-head">
             <span class="sd-title">{{ detail.title || detail.session_id }}</span>
-            <button class="sd-close" @click="closeDetail">×</button>
+            <button class="sd-close" aria-label="关闭会话详情" @click="closeDetail">×</button>
           </div>
           <div class="sd-body">
             <div class="sd-meta">
@@ -140,6 +140,9 @@
               <span v-if="detail.summary.models && detail.summary.models.length" class="sd-meta-item">{{ detail.summary.models.join(' / ') }}</span>
             </div>
             <div v-if="detailLoading" style="text-align:center;color:var(--text-faint);padding:32px 0;">加载中...</div>
+            <div v-else-if="detail.loadError" role="alert" style="color:var(--red);padding:24px 0;">
+              {{ detail.loadError }} <button class="detail-btn" @click="openDetail(detail)">重试</button>
+            </div>
             <template v-else-if="detail.messages && detail.messages.length">
               <div class="sd-msgs">
                 <div v-for="(m, i) in detail.messages" :key="i" class="sd-msg" :class="m.role">
@@ -163,6 +166,7 @@
 
 <script setup>
 import { ref } from 'vue';
+import { useDialog } from '../composables/useDialog';
 import { fetchSessionDetail, searchSessions } from '../api';
 import { fmtTokens, fmtCost, fmtNum } from '../utils/format';
 
@@ -174,6 +178,9 @@ defineProps({
 
 const detail = ref(null);
 const detailLoading = ref(false);
+const detailDialog = ref(null);
+let detailRequest = 0;
+useDialog(() => !!detail.value, detailDialog, closeDetail);
 
 /* ---- 全文搜索 ---- */
 const searchQuery = ref('');
@@ -234,20 +241,22 @@ function ctxStyle(ratio) {
 }
 
 async function openDetail(s) {
+  const request = ++detailRequest;
   detailLoading.value = true;
-  detail.value = { ...s, summary: { calls: s.calls, failed: s.failed, tokens: s.tokens, cost: s.cost, models: [], first_at: s.first_at, last_at: s.last_at }, messages: [] };
+  detail.value = { ...s, loadError: '', summary: s.summary || { calls: s.calls, failed: s.failed, tokens: s.tokens, cost: s.cost, models: [], first_at: s.first_at, last_at: s.last_at }, messages: [] };
   try {
     const d = await fetchSessionDetail(s.session_id, s.source);
-    detail.value = d;
+    if (request === detailRequest) detail.value = d;
   } catch (e) {
-    detail.value.messages = [];
-    detail.value.loadError = e.message;
+    if (request === detailRequest && detail.value) detail.value.loadError = e.message;
   } finally {
-    detailLoading.value = false;
+    if (request === detailRequest) detailLoading.value = false;
   }
 }
 
 function closeDetail() {
+  detailRequest++;
+  detailLoading.value = false;
   detail.value = null;
 }
 

@@ -57,7 +57,8 @@ const source = createJsonlSource({
       // OpenAI 口径：input_tokens 已含缓存读，拆出后 prompt 只保留纯输入
       const cached = Number(usage.cached_input_tokens) || 0;
       const prompt = Math.max(0, (Number(usage.input_tokens) || 0) - cached);
-      const completion = (Number(usage.output_tokens) || 0) + (Number(usage.reasoning_output_tokens) || 0);
+      // reasoning_output_tokens 是 output_tokens 的子集，不能重复计入输出与费用。
+      const completion = Number(usage.output_tokens) || 0;
       const currentModel = state.currentModel;
       const sid = state.sessionId || path.basename(meta.file, '.jsonl').replace(/^rollout-/, '');
       emit({
@@ -130,4 +131,4 @@ function getRows(startMs = 0, endMs = Infinity) {
   return source.getRecords().filter((r) => r.createdAt >= startMs && r.createdAt <= end);
 }
 
-module.exports = { getRows, getRootDir, collectRollouts, source: 'codex' };
+module.exports = { getRows, getRootDir, collectRollouts, getPlanInfo, source: 'codex' };

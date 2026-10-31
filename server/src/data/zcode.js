@@ -101,7 +101,8 @@ function toRow(r, configPath) {
   const cacheRead = Number(r.cache_read_input_tokens) || 0;
   const cacheWrite = Number(r.cache_creation_input_tokens) || 0;
   const prompt = Math.max(0, inputRaw - cacheRead);
-  const completion = (Number(r.output_tokens) || 0) + (Number(r.reasoning_tokens) || 0);
+  // reasoning_tokens 已包含在 output_tokens 中，与 computed_total_tokens 对账。
+  const completion = Number(r.output_tokens) || 0;
   const total = Number(r.computed_total_tokens) || 0 || (prompt + completion + cacheWrite + cacheRead);
   const sessionDir = typeof r.session_directory === 'string' ? r.session_directory : '';
   const sessionTaskType = r.session_task_type || r.task_type || '';
@@ -391,7 +392,7 @@ function escapeLike(v) {
  * 全文检索原语：part 正文与 session 标题的 LIKE 匹配，返回原始行。
  * 时间过滤、摘要在调用方（search.js）做；库缺失/表缺失时返回空结果不抛错。
  */
-function searchRaw(rawQuery, limit = 2000) {
+async function searchRaw(rawQuery, limit = 2000) {
   let parts = [];
   let titles = [];
   try {
@@ -401,12 +402,26 @@ function searchRaw(rawQuery, limit = 2000) {
   }
   const like = `%${escapeLike(rawQuery)}%`;
   try {
-    parts = conn.db.prepare(`
+    const db = conn.db;
+    const cap = Math.min(Math.max(Number(limit) || 2000, 1), 5000);
+    const lastRow = db.prepare('SELECT MAX(rowid) AS id FROM part').get().id || 0;
+    const nextBatch = db.prepare('SELECT rowid AS id FROM part WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 256');
+    const matches = db.prepare(`
       SELECT m.session_id, m.data AS mdata, p.data AS pdata
       FROM part p JOIN message m ON p.message_id = m.id
-      WHERE p.data LIKE ? ESCAPE '\\'
+      WHERE p.rowid > ? AND p.rowid <= ? AND p.data LIKE ? ESCAPE '\\'
       LIMIT ?
-    `).all(like, Math.min(Math.max(Number(limit) || 2000, 1), 5000));
+    `);
+    let after = 0;
+    while (after < lastRow && parts.length < cap) {
+      const batch = nextBatch.all(after, lastRow);
+      if (!batch.length) break;
+      const end = batch[batch.length - 1].id;
+      parts.push(...matches.all(after, end, like, cap - parts.length));
+      after = end;
+      // SQLite 为同步 API：分段扫描并让出事件循环，避免阻塞健康检查和自动刷新。
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   } catch { /* message/part 表缺失（旧版 ZCode） */ }
   try {
     titles = conn.db.prepare(`

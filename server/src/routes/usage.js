@@ -62,12 +62,19 @@ router.post('/report', (req, res) => {
     if (!String(channelName).trim() || !String(modelName).trim()) {
       return res.status(400).json({ code: 400, message: 'channel 与 model 为必填项' });
     }
+    if (![prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, latency_ms]
+      .every((value) => Number.isFinite(Number(value)))) {
+      return res.status(400).json({ code: 400, message: 'token 数量与延迟必须为有限数字' });
+    }
     const pTokens = Math.max(0, Number(prompt_tokens) || 0);
     const cTokens = Math.max(0, Number(completion_tokens) || 0);
     const crTokens = Math.max(0, Number(cache_read_tokens) || 0);
     const cwTokens = Math.max(0, Number(cache_write_tokens) || 0);
     if (pTokens + cTokens + crTokens + cwTokens <= 0) {
       return res.status(400).json({ code: 400, message: 'token 数量必须大于 0' });
+    }
+    if (!Number.isSafeInteger(pTokens + cTokens + crTokens + cwTokens)) {
+      return res.status(400).json({ code: 400, message: 'token 总量必须是安全范围内的整数' });
     }
     const requestId = String(request_id).trim() || reports.newRequestId();
 

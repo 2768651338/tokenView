@@ -271,6 +271,7 @@ router.post('/settings/retention', wrap(async (req, res) => {
   let applyError = '';
   try {
     applied = reports.applyRetention(saved, true);
+    if (applied && applied.removed > 0) stats.invalidate();
   } catch (e) {
     applyError = e.message;
   }
@@ -377,7 +378,7 @@ router.post('/settings/zcode-dir', wrap(async (req, res) => {
   res.json({ code: 0, message: '已保存，ZCode 数据源已切换到新位置', data: zcodeStatus() });
 }));
 
-// ---------- 明细导出（CSV，按当前筛选，封顶 10 万行） ----------
+// ---------- 明细导出（CSV / JSON，按当前筛选，封顶 10 万行） ----------
 router.get('/usage/export', wrap(async (req, res) => {
   const rows = await stats.getUsageExport({
     channel: req.query.channel || '',
@@ -386,14 +387,15 @@ router.get('/usage/export', wrap(async (req, res) => {
     end: req.query.end || '',
     source: req.query.source || ''
   });
+  const format = req.query.format === 'json' ? 'json' : 'csv';
   // 序列化到临时文件后经 res.download 附件下发，发送完成即清理
-  const tmpPath = path.join(os.tmpdir(), `tokenview-usage-${crypto.randomBytes(6).toString('hex')}.csv`);
+  const tmpPath = path.join(os.tmpdir(), `tokenview-usage-${crypto.randomBytes(6).toString('hex')}.${format}`);
   try {
-    fs.writeFileSync(tmpPath, usageExport.toCsv(rows));
+    fs.writeFileSync(tmpPath, format === 'json' ? JSON.stringify(rows, null, 2) : usageExport.toCsv(rows));
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     await new Promise((resolve) => {
-      res.download(tmpPath, `tokenview-usage-${stamp}.csv`, (err) => {
+      res.download(tmpPath, `tokenview-usage-${stamp}.${format}`, (err) => {
         fs.unlink(tmpPath, () => { /* 忽略清理失败 */ });
         if (err && !res.headersSent) res.status(500).json({ code: 500, message: '导出失败' });
         resolve();
@@ -428,7 +430,7 @@ router.get('/backup/export', wrap(async (req, res) => {
 }));
 
 // 导入 bundle：独立大体积 JSON 中间件（reports.jsonl 可能远超应用级 1MB 限制）
-router.post('/backup/import', express.json({ limit: '210mb' }), (req, res) => {
+router.post('/backup/import', (req, res) => {
   try {
     const r = backup.importBundle(req.body);
     res.json({ code: 0, message: `已导入 ${r.imported.length} 个文件`, data: r });

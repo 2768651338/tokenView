@@ -7,6 +7,7 @@
       </span>
     </div>
 
+    <div v-if="loadError" role="alert" style="color:var(--red);font-size:12px;margin-bottom:8px;">加载失败：{{ loadError }}，请刷新重试。</div>
     <div class="cs-overall">
       <div class="cs-rate">
         <div class="cs-rate-value" :style="rateColor">{{ overall ? overall.hit_rate : '—' }}<span class="cs-rate-unit">%</span></div>
@@ -60,6 +61,8 @@ const props = defineProps({
 });
 
 const data = ref(null);
+const loadError = ref('');
+let loadRequest = 0;
 const chartRef = ref(null);
 let chart = null;
 
@@ -114,11 +117,18 @@ function render() {
 function resize() { chart && chart.resize(); }
 
 async function load() {
+  const request = ++loadRequest;
+  loadError.value = '';
   try {
-    data.value = await fetchCacheStats(props.days);
+    const result = await fetchCacheStats(props.days);
+    if (request !== loadRequest) return;
+    data.value = result;
     render();
-  } catch { /* 面板静默 */ }
+  } catch (e) {
+    if (request === loadRequest) loadError.value = e.message || '请求失败';
+  }
 }
+defineExpose({ refresh: load });
 
 onMounted(() => {
   chart = echarts.init(chartRef.value);
@@ -126,6 +136,7 @@ onMounted(() => {
   load();
 });
 onBeforeUnmount(() => {
+  loadRequest++;
   window.removeEventListener('resize', resize);
   chart && chart.dispose();
 });

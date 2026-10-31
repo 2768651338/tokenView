@@ -6,6 +6,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const zcode = require('./zcode');
 const claudeCode = require('./claude-code');
 const codex = require('./codex');
@@ -96,8 +97,8 @@ function recordHit(bucket, { snippet, role = '', ms = 0, project = '', title = '
 
 /* ---------- ZCode：SQLite LIKE ---------- */
 
-function searchZcode(queryLower, startMs, buckets) {
-  const raw = zcode.searchRaw(queryLower, 3000);
+async function searchZcode(queryLower, startMs, buckets) {
+  const raw = await zcode.searchRaw(queryLower, 3000);
   const extras = zcode.getSessionExtras();
   for (const p of raw.parts) {
     const sid = String(p.session_id || '').slice(0, 64);
@@ -185,7 +186,7 @@ function codexLineTexts(obj, state) {
   return { texts: [], title: '' };
 }
 
-function searchJsonlSource(source, files, queryLower, startMs, buckets, state) {
+async function searchJsonlSource(source, files, queryLower, startMs, buckets, state) {
   const extract = source === 'claude-code' ? claudeLineTexts : codexLineTexts;
   let bytesScanned = 0;
   let truncated = false;
@@ -195,43 +196,52 @@ function searchJsonlSource(source, files, queryLower, startMs, buckets, state) {
     try {
       const st = fs.statSync(f);
       if (st.isFile() && st.size <= FILE_BYTE_CAP) metas.push({ file: f, mtimeMs: st.mtimeMs, size: st.size });
-    } catch { /* 读取中文件消失 */ }
+      else if (st.isFile()) truncated = true;
+    } catch { truncated = true; /* 读取中文件消失 */ }
   }
   metas.sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const meta of metas) {
-    if (bytesScanned > SCAN_BYTE_CAP) { truncated = true; break; }
-    let text;
-    try {
-      text = fs.readFileSync(meta.file, 'utf8');
-    } catch { continue; }
+    if (bytesScanned + meta.size > SCAN_BYTE_CAP) { truncated = true; break; }
+    if (!meta.size) continue;
     bytesScanned += meta.size;
-    const lower = text.toLowerCase();
-    // 文件级预筛：整文件不含关键词直接跳过后续解析
-    if (!lower.includes(queryLower)) continue;
     let sessionId = state.sessionId || path.basename(meta.file, '.jsonl').replace(/^rollout-/, '');
-    for (const line of text.split('\n')) {
-      if (!line.toLowerCase().includes(queryLower)) continue;
-      let obj;
-      try { obj = JSON.parse(line); } catch { continue; }
-      if (source === 'claude-code') {
-        const sid = String(obj.sessionId || '').slice(0, 64);
-        if (sid) sessionId = sid;
+    const input = fs.createReadStream(meta.file, { encoding: 'utf8', end: meta.size - 1 });
+    const lines = readline.createInterface({ input, crlfDelay: Infinity });
+    let lineCount = 0;
+    try {
+      for await (const line of lines) {
+        // 流式读取并定期让出事件循环，搜索期间统计与导出仍可响应。
+        if (++lineCount % 100 === 0) await new Promise((resolve) => setImmediate(resolve));
+        if (!line.toLowerCase().includes(queryLower)
+          && !(source === 'codex' && line.includes('"session_meta"'))) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+        if (source === 'claude-code') {
+          const sid = String(obj.sessionId || '').slice(0, 64);
+          if (sid) sessionId = sid;
+        }
+        const { texts, title } = extract(obj, state);
+        if (source === 'codex' && state.sessionId) sessionId = state.sessionId;
+        const ts = Date.parse(obj.timestamp) || 0;
+        if (startMs && ts && ts < startMs) continue;
+        const hit = firstMatch(texts, queryLower);
+        if (!hit) continue;
+        const project = source === 'claude-code'
+          ? (typeof obj.cwd === 'string' && obj.cwd ? path.basename(obj.cwd).slice(0, 128) : '')
+          : (state.cwd ? path.basename(state.cwd).slice(0, 128) : '');
+        recordHit(bucketOf(buckets, source, sessionId), {
+          snippet: hit.snippet,
+          role: roleOf(obj),
+          ms: ts,
+          project,
+          title
+        });
       }
-      const ts = Date.parse(obj.timestamp) || 0;
-      if (startMs && ts && ts < startMs) continue;
-      const { texts, title } = extract(obj, state);
-      const hit = firstMatch(texts, queryLower);
-      if (!hit) continue;
-      const project = source === 'claude-code'
-        ? (typeof obj.cwd === 'string' && obj.cwd ? path.basename(obj.cwd).slice(0, 128) : '')
-        : (state.cwd ? path.basename(state.cwd).slice(0, 128) : '');
-      recordHit(bucketOf(buckets, source, sessionId), {
-        snippet: hit.snippet,
-        role: roleOf(obj),
-        ms: ts,
-        project,
-        title
-      });
+    } catch {
+      truncated = true; // 扫描中文件被移动或变更，保留已找到的结果并告知截断。
+    } finally {
+      lines.close();
+      input.destroy();
     }
     state.sessionId = '';
     state.cwd = '';
@@ -254,16 +264,16 @@ async function search({ query = '', days = 'all', limit = 20 } = {}) {
   const buckets = new Map();
   let truncated = false;
 
-  searchZcode(queryLower, startMs, buckets);
+  await searchZcode(queryLower, startMs, buckets);
 
   const ccRoot = claudeCode.getRootDir();
   if (fs.existsSync(ccRoot)) {
-    const t = searchJsonlSource('claude-code', claudeCode.collectJsonlFiles(ccRoot), queryLower, startMs, buckets, {});
+    const t = await searchJsonlSource('claude-code', claudeCode.collectJsonlFiles(ccRoot), queryLower, startMs, buckets, {});
     truncated = truncated || t;
   }
   const codexRoot = codex.getRootDir();
   if (fs.existsSync(codexRoot)) {
-    const t = searchJsonlSource('codex', [
+    const t = await searchJsonlSource('codex', [
       ...codex.collectRollouts(path.join(codexRoot, 'sessions')),
       ...codex.collectRollouts(path.join(codexRoot, 'archived_sessions'))
     ], queryLower, startMs, buckets, { sessionId: '', cwd: '' });

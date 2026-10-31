@@ -34,6 +34,9 @@
       <span>多</span>
       <span style="margin-left:auto;color:var(--text-faint);">本地时间 · {{ rangeText }}</span>
     </div>
+    <div v-if="data.excluded_calls" style="font-size:11px;color:var(--text-faint);margin-top:8px;">
+      {{ fmtNum(data.excluded_calls) }} 次日汇总调用缺少小时信息，未计入时段分布。
+    </div>
   </div>
 </template>
 

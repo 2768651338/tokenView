@@ -10,6 +10,7 @@
       </div>
     </div>
 
+    <div v-if="loadError" role="alert" style="color:var(--red);font-size:12px;margin-bottom:8px;">加载失败：{{ loadError }}，请刷新重试。</div>
     <div v-if="summary" class="bill-summary">
       <div class="bill-sum-item">
         <div class="bill-sum-label">月 Tokens</div>
@@ -83,7 +84,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { fetchBill, fetchBillMonths } from '../api';
 import { fmtTokens, fmtCost, fmtNum } from '../utils/format';
 import { downloadCsv } from '../utils/download';
@@ -92,6 +93,8 @@ const months = ref([]);
 const month = ref('');
 const bill = ref(null);
 const exporting = ref(false);
+const loadError = ref('');
+let loadRequest = 0;
 
 const summary = computed(() => (bill.value && bill.value.summary) || null);
 const byChannel = computed(() => (bill.value && bill.value.by_channel) || []);
@@ -99,12 +102,28 @@ const byModel = computed(() => (bill.value && bill.value.by_model) || []);
 
 async function loadMonths() {
   months.value = await fetchBillMonths();
-  if (months.value.length && !month.value) month.value = months.value[0];
+  if (!months.value.includes(month.value)) month.value = months.value[0] || '';
 }
 
 async function loadBill() {
-  if (!month.value) return;
-  bill.value = await fetchBill(month.value);
+  const request = ++loadRequest;
+  loadError.value = '';
+  if (!month.value) { bill.value = null; return; }
+  try {
+    const result = await fetchBill(month.value);
+    if (request === loadRequest) bill.value = result;
+  } catch (e) {
+    if (request === loadRequest) loadError.value = e.message || '请求失败';
+  }
+}
+
+async function refresh() {
+  try {
+    await loadMonths();
+    await loadBill();
+  } catch (e) {
+    loadError.value = e.message || '请求失败';
+  }
 }
 
 async function exportBill() {
@@ -123,11 +142,9 @@ async function exportBill() {
   }
 }
 
-onMounted(async () => {
-  await loadMonths();
-  await loadBill();
-});
-defineExpose({ loadMonths });
+onMounted(refresh);
+onBeforeUnmount(() => { loadRequest++; });
+defineExpose({ loadMonths, refresh });
 </script>
 
 <style scoped>

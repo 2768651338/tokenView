@@ -52,22 +52,19 @@ function toRow(r, providerName) {
   const cacheWrite = Number(r.cache_creation_tokens) || 0;
   const inputRaw = Number(r.input_tokens) || 0;
   const sem = Number(r.input_token_semantics);
-  // 统一口径：promptTokens 只保留纯输入，缓存读写单独成列；totalTokens 保持与旧口径一致
+  // 统一口径：promptTokens 只保留纯输入，缓存读写单独成列。
   let prompt;
-  let total;
   if (sem === 1) {
     // input 已含全部缓存 token
     prompt = Math.max(0, inputRaw - cacheRead - cacheWrite);
-    total = inputRaw + output;
   } else if (sem === 0) {
     // 旧 Codex 行：input 已含 cache read，不含 cache creation
     prompt = Math.max(0, inputRaw - cacheRead);
-    total = prompt + cacheWrite + output;
   } else {
     // fresh：input 为纯新增
     prompt = inputRaw;
-    total = prompt + output + cacheRead;
   }
+  const total = prompt + output + cacheRead + cacheWrite;
   return {
     requestId: ['cc-switch', r.date, r.app_type, r.provider_id, r.model, r.request_model, r.pricing_model].join(':'),
     channel: providerName,
@@ -79,6 +76,9 @@ function toRow(r, providerName) {
     cacheReadTokens: cacheRead,
     cacheWriteTokens: cacheWrite,
     totalTokens: total,
+    callCount: Math.max(0, Number(r.request_count) || 0),
+    successCount: Math.max(0, Number(r.success_count) || 0),
+    timeGranularity: 'day',
     project: '',
     latencyMs: Math.round(Number(r.avg_latency_ms) || 0),
     status: (Number(r.success_count) || 0) > 0 ? 1 : 0,

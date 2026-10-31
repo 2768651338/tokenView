@@ -36,9 +36,9 @@ const source = createJsonlSource({
       const input = Number(u.input) || 0;
       const output = Number(u.output) || 0;
       const cacheRead = Number(u.cacheRead) || 0;
-      const reasoning = Number(u.reasoningTokens) || 0;
-      // usage.total 不含 reasoning（实测 input+output+cacheRead === total），统一按四项之和
-      const total = input + output + cacheRead + reasoning;
+      const cacheWrite = Number(u.cacheWrite) || 0;
+      // reasoningTokens 已包含在 output 中；缓存单列，按原始 usage.total 口径对账。
+      const total = input + output + cacheRead + cacheWrite;
       if (!total) return;
       const failed = !!(d.aborted || d.timedOut || d.externalAbort || d.idleTimedOut || d.promptErrorSource);
       emit({
@@ -48,9 +48,9 @@ const source = createJsonlSource({
         model: obj.modelId || 'unknown',
         source: 'lobsterai',
         promptTokens: input,
-        completionTokens: output + reasoning,
+        completionTokens: output,
         cacheReadTokens: cacheRead,
-        cacheWriteTokens: 0,
+        cacheWriteTokens: cacheWrite,
         totalTokens: total,
         project: '',
         latencyMs: 0,
@@ -68,8 +68,10 @@ const source = createJsonlSource({
     const total = Number(u.totalTokens) || 0;
     if (!total) return;
     state.rowCount++;
-    const prompt = (Number(u.input) || 0) + (Number(u.cacheWrite) || 0);
-    const completion = (Number(u.output) || 0) + (Number(u.reasoningTokens) || 0);
+    const prompt = Number(u.input) || 0;
+    const completion = Number(u.output) || 0;
+    const cacheRead = Number(u.cacheRead) || 0;
+    const cacheWrite = Number(u.cacheWrite) || 0;
     emit({
       requestId: 'lobsterai:' + (obj.id || `${path.basename(meta.file)}:${state.rowCount - 1}`),
       channel: msg.model || 'unknown',
@@ -78,6 +80,8 @@ const source = createJsonlSource({
       source: 'lobsterai',
       promptTokens: prompt,
       completionTokens: completion,
+      cacheReadTokens: cacheRead,
+      cacheWriteTokens: cacheWrite,
       totalTokens: total,
       latencyMs: 0,
       status: 1,

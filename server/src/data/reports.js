@@ -98,9 +98,9 @@ function reset() {
 function applyRetention(cfg, force = false) {
   load();
   const now = Date.now();
+  if (!cfg || !cfg.enabled) return null;
+  if (!cfg.max_age_days && !cfg.max_lines) return null;
   if (!force) {
-    if (!cfg || !cfg.enabled) return null;
-    if (!cfg.max_age_days && !cfg.max_lines) return null;
     if (now - lastRetentionAt < RETENTION_CHECK_INTERVAL_MS) return null;
   }
   lastRetentionAt = now;

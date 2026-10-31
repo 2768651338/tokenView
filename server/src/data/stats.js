@@ -82,6 +82,19 @@ const SOURCE_LIST = [zcode, claudeCode, codex, workbuddy, lobsterai, joyclaw, co
 const cacheState = { rows: null, builtAt: 0 };
 let building = null;
 
+// 日汇总记录携带真实请求数，不能把一条汇总当作一次调用。
+function callCount(row) {
+  return Number.isSafeInteger(row.callCount) && row.callCount >= 0 ? row.callCount : 1;
+}
+
+function successCount(row) {
+  return Number.isSafeInteger(row.successCount)
+    ? Math.max(0, Math.min(callCount(row), row.successCount))
+    : row.status === 1 ? callCount(row) : 0;
+}
+
+const totalCallsOf = (rows) => rows.reduce((sum, row) => sum + callCount(row), 0);
+
 const yieldTick = () => new Promise((resolve) => setImmediate(resolve));
 
 /** 全量构建一次合并行（各源自身有增量缓存，重复构建开销很小） */
@@ -319,7 +332,7 @@ async function getOverview(days = 30) {
   for (const r of allRows) {
     totalTokens += r.totalTokens;
     totalCost += r.cost;
-    if (r.status === 1) successCalls++;
+    successCalls += successCount(r);
     channels.add(r.channel);
     if (r.createdAt >= start && r.createdAt <= end) {
       periodTokens += r.totalTokens;
@@ -338,7 +351,7 @@ async function getOverview(days = 30) {
     if (r.createdAt >= monthMs) monthCost += r.cost;
   }
 
-  const totalCalls = allRows.length;
+  const totalCalls = totalCallsOf(allRows);
   const avgDailyTokens = dayKeys.size ? periodTokens / dayKeys.size : 0;
   const todayDelta = yesterdayTokens > 0 ? ((todayTokens - yesterdayTokens) / yesterdayTokens) * 100 : null;
 
@@ -356,7 +369,7 @@ async function getOverview(days = 30) {
     month_cost: Number(monthCost.toFixed(2)),
     today_tokens: todayTokens,
     today_cost: Number(todayCost.toFixed(2)),
-    today_calls: allRows.filter((r) => r.createdAt >= todayMs).length,
+    today_calls: totalCallsOf(allRows.filter((r) => r.createdAt >= todayMs)),
     today_delta: todayDelta === null ? null : Number(todayDelta.toFixed(2)),
     avg_daily_tokens: Math.round(avgDailyTokens),
     range_days: days === 'all' ? null : Number(days)
@@ -371,7 +384,7 @@ function bucketize(rows, granularity) {
     const b = buckets.get(label) || { label, tokens: 0, cost: 0, calls: 0, prompt_tokens: 0, completion_tokens: 0, cache_tokens: 0 };
     b.tokens += r.totalTokens;
     b.cost += r.cost;
-    b.calls += 1;
+    b.calls += callCount(r);
     b.prompt_tokens += r.promptTokens;
     b.completion_tokens += r.completionTokens;
     b.cache_tokens += r.cacheReadTokens + r.cacheWriteTokens;
@@ -438,7 +451,7 @@ async function getChannels(days = 7) {
     };
     c.tokens += r.totalTokens;
     c.cost += r.cost;
-    c.calls += 1;
+    c.calls += callCount(r);
     c.models.add(r.model);
     map.set(r.channel, c);
   }
@@ -467,7 +480,7 @@ async function getModels(days = 7, limit = 10) {
     const m = map.get(key) || { channel: r.channel, model: r.model, tokens: 0, cost: 0, calls: 0 };
     m.tokens += r.totalTokens;
     m.cost += r.cost;
-    m.calls += 1;
+    m.calls += callCount(r);
     map.set(key, m);
   }
   return [...map.values()]
@@ -506,7 +519,7 @@ async function getPrices() {
     const m = map.get(key) || { channel: r.channel, model: r.model, tokens: 0, cost: 0, calls: 0 };
     m.tokens += r.totalTokens;
     m.cost += r.cost;
-    m.calls += 1;
+    m.calls += callCount(r);
     map.set(key, m);
   }
   // 价表中存在但尚无用量的模型（如在线同步/新增自定义价/cc-switch 兜底价），追加在列表末尾（按模型名排序）
@@ -549,7 +562,7 @@ async function filterUsageRows({ channel = '', status = '', start = '', end = ''
   if (source) rows = rows.filter((r) => r.source === source);
   if (status !== '' && status !== undefined && status !== null) {
     const s = Number(status);
-    rows = rows.filter((r) => r.status === s);
+    rows = rows.filter((r) => s === 1 ? successCount(r) > 0 : s === 0 ? callCount(r) > successCount(r) : false);
   }
   if (start) rows = rows.filter((r) => r.createdAt >= new Date(start).getTime());
   if (end) {
@@ -578,6 +591,9 @@ function toUsageView(r, id) {
     ttft_ms: r.ttftMs || 0,
     error_type: r.errorType || '',
     status: r.status,
+    call_count: callCount(r),
+    success_count: successCount(r),
+    record_type: r.timeGranularity === 'day' ? 'daily' : 'request',
     created_at: fmtTime(r.createdAt)
   };
 }
@@ -619,7 +635,7 @@ async function getTools() {
   for (const r of rows) {
     const key = r.source;
     const a = agg.get(key) || { calls: 0, tokens: 0, cost: 0, lastUsed: 0 };
-    a.calls += 1;
+    a.calls += callCount(r);
     a.tokens += r.totalTokens;
     a.cost += r.cost;
     if (r.createdAt > a.lastUsed) a.lastUsed = r.createdAt;
@@ -656,7 +672,12 @@ async function getHeatmap(days = 30) {
     tokens: 0,
     calls: 0
   }));
+  let excludedCalls = 0;
   for (const r of rows) {
+    if (r.timeGranularity === 'day') {
+      excludedCalls += callCount(r);
+      continue;
+    }
     const d = new Date(r.createdAt);
     const idx = ((d.getDay() + 6) % 7) * 24 + d.getHours();
     cells[idx].tokens += r.totalTokens;
@@ -664,6 +685,7 @@ async function getHeatmap(days = 30) {
   }
   return {
     list: cells,
+    excluded_calls: excludedCalls,
     max_tokens: Math.max(...cells.map((c) => c.tokens), 0),
     max_calls: Math.max(...cells.map((c) => c.calls), 0)
   };
@@ -680,7 +702,7 @@ function percentile(sorted, p) {
 async function getLatency(days = 30) {
   const [start, end] = parseRange(days);
   const allRows = await getAllRows(start, end);
-  const rows = allRows.filter((r) => r.latencyMs > 0);
+  const rows = allRows.filter((r) => r.latencyMs > 0 && r.timeGranularity !== 'day');
   const byChannel = new Map();
   for (const r of rows) {
     const c = byChannel.get(r.channel) || { channel: r.channel, values: [], calls: 0 };
@@ -782,7 +804,7 @@ function groupBy(rows, keyOf) {
     const g = map.get(key) || { name: key, tokens: 0, cost: 0, calls: 0 };
     g.tokens += r.totalTokens;
     g.cost += r.cost;
-    g.calls += 1;
+    g.calls += callCount(r);
     map.set(key, g);
   }
   return [...map.values()]
@@ -820,7 +842,7 @@ async function getBill(month) {
   const summary = {
     tokens: rows.reduce((s, r) => s + r.totalTokens, 0),
     cost: Number(rows.reduce((s, r) => s + r.cost, 0).toFixed(2)),
-    calls: rows.length,
+    calls: totalCallsOf(rows),
     active_days: dayKeys.size
   };
   if (usedSubs.length) {
@@ -884,7 +906,7 @@ async function getHealth() {
   const agg = new Map(); // source -> { calls, tokens, lastUsed }
   for (const r of rows) {
     const a = agg.get(r.source) || { calls: 0, tokens: 0, lastUsed: 0 };
-    a.calls += 1;
+    a.calls += callCount(r);
     a.tokens += r.totalTokens;
     if (r.createdAt > a.lastUsed) a.lastUsed = r.createdAt;
     agg.set(r.source, a);
@@ -1072,24 +1094,23 @@ async function getErrors(days = 30) {
   const byType = new Map();
   const byChannel = new Map();
   for (const r of rows) {
-    calls += 1;
+    calls += callCount(r);
     const ch = byChannel.get(r.channel) || { name: r.channel, calls: 0, failed: 0 };
-    ch.calls += 1;
-    if (r.status !== 1) {
-      failed += 1;
-      ch.failed += 1;
-    }
+    ch.calls += callCount(r);
+    const failures = callCount(r) - successCount(r);
+    failed += failures;
+    ch.failed += failures;
     if (r.cancelled) cancelled += 1;
     if (r.retryCount > 0) {
       retryCalls += 1;
       retryTotal += r.retryCount;
     }
     if (r.contextExceeded) ctxExceeded += 1;
-    const et = r.errorType || (r.status !== 1 ? '未标注' : '');
+    const et = r.errorType || (failures > 0 ? '未标注' : '');
     if (et) {
-      errorEvents += 1;
+      errorEvents += failures || 1;
       const t = byType.get(et) || { name: et, count: 0, lastAt: 0 };
-      t.count += 1;
+      t.count += failures || 1;
       if (r.createdAt > t.lastAt) t.lastAt = r.createdAt;
       byType.set(et, t);
     }
@@ -1160,8 +1181,9 @@ async function getCacheStats(days = 30) {
     const c = byChannel.get(r.channel) || { channel: r.channel, input: 0, cache_read: 0, calls: 0, cache_calls: 0 };
     c.input += r.promptTokens;
     c.cache_read += r.cacheReadTokens;
-    c.calls += 1;
-    if (r.cacheReadTokens > 0) c.cache_calls += 1;
+    c.calls += callCount(r);
+    if (r.timeGranularity === 'day') c.cache_calls = null;
+    else if (r.cacheReadTokens > 0 && c.cache_calls !== null) c.cache_calls += 1;
     byChannel.set(r.channel, c);
   }
   return {
@@ -1213,7 +1235,7 @@ async function getWhatIf(days = 30, targetModel = '') {
     m.cache_read_tokens += r.cacheReadTokens;
     m.cache_write_tokens += r.cacheWriteTokens;
     m.actual_cost += r.cost;
-    m.calls += 1;
+    m.calls += callCount(r);
     perModel.set(r.model, m);
   }
   const models = [...perModel.values()]
@@ -1335,7 +1357,7 @@ function digestAggregate(rows) {
     prompt += r.promptTokens;
     completion += r.completionTokens;
     cacheRead += r.cacheReadTokens;
-    if (r.status !== 1) failed += 1;
+    failed += callCount(r) - successCount(r);
     days.add(fmtDay(r.createdAt));
     const bump = (map, key, extra) => {
       const it = map.get(key) || { name: key, cost: 0, ...extra };
@@ -1359,8 +1381,8 @@ function digestAggregate(rows) {
     if (ex && ex.title) topSession.title = ex.title;
   }
   return {
-    cost, tokens, prompt, completion, cache_read: cacheRead, calls: rows.length, failed,
-    success_rate: rows.length ? Number(((rows.length - failed) / rows.length * 100).toFixed(2)) : 100,
+    cost, tokens, prompt, completion, cache_read: cacheRead, calls: totalCallsOf(rows), failed,
+    success_rate: totalCallsOf(rows) ? Number(((totalCallsOf(rows) - failed) / totalCallsOf(rows) * 100).toFixed(2)) : 100,
     active_days: days.size,
     top_channel: topOf(byChannel, (v) => v.cost),
     top_model: topOf(byModel, (v) => v.cost),

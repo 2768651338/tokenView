@@ -3,7 +3,7 @@
     <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;">
       <span>延迟分析</span>
       <span style="font-size:11px;color:var(--text-faint);font-weight:400;letter-spacing:0;">
-        仅统计带延迟数据的调用 · 近 {{ days === 'all' ? '全部' : days + ' 天' }}
+        仅统计逐次延迟（日汇总不参与） · {{ days === 'all' ? '全部' : '近 ' + days + ' 天' }}
       </span>
     </div>
     <template v-if="data.overall && data.overall.calls > 0">

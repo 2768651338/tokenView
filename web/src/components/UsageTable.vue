@@ -46,7 +46,7 @@
         </thead>
         <tbody>
           <tr v-for="r in list" :key="r.id">
-            <td style="color:var(--text-sub);">{{ r.created_at }}</td>
+            <td style="color:var(--text-sub);">{{ r.created_at }}<span v-if="r.record_type === 'daily'">（日汇总）</span></td>
             <td><span class="chip">{{ r.channel }}</span></td>
             <td>{{ r.model }}</td>
             <td style="text-align:right;">{{ fmtNum(r.prompt_tokens) }}</td>
@@ -55,8 +55,8 @@
             <td style="text-align:right;color:var(--amber);">¥{{ Number(r.cost).toFixed(4) }}</td>
             <td style="text-align:right;color:var(--text-sub);">{{ fmtLatency(r.latency_ms) }}</td>
             <td>
-              <span class="tag" :class="r.status === 1 ? 'tag-ok' : 'tag-fail'">
-                {{ r.status === 1 ? '成功' : '失败' }}
+              <span class="tag" :class="r.success_count === r.call_count ? 'tag-ok' : 'tag-fail'">
+                {{ r.record_type === 'daily' ? `成功 ${r.success_count} / ${r.call_count}` : r.status === 1 ? '成功' : '失败' }}
               </span>
             </td>
           </tr>
@@ -68,12 +68,15 @@
     </div>
 
     <div class="pager">
-      <span>共 {{ total.toLocaleString('zh-CN') }} 条</span>
+      <span>共 {{ total.toLocaleString('zh-CN') }} 条记录</span>
       <span>
         <button :disabled="page <= 1" @click="$emit('page-change', page - 1)">上一页</button>
         <span style="margin:0 12px;">{{ page }} / {{ pageCount }}</span>
         <button :disabled="page >= pageCount" @click="$emit('page-change', page + 1)">下一页</button>
       </span>
+    </div>
+    <div v-if="list.some((r) => r.record_type === 'daily')" style="color:var(--text-faint);font-size:11px;margin-top:8px;">
+      CC Switch 按日汇总；状态筛选匹配含该状态的汇总记录，Token 与费用保留整条汇总值。
     </div>
   </div>
 </template>

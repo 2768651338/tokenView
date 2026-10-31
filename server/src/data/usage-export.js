@@ -18,7 +18,9 @@ const COLUMNS = [
   ['latency_ms', '延迟ms'],
   ['ttft_ms', '首字延迟ms'],
   ['error_type', '错误类型'],
-  ['status', '状态']
+  ['status', '状态'],
+  ['call_count', '调用次数'],
+  ['success_count', '成功次数']
 ];
 
 function csvEscape(v) {
